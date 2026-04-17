@@ -17,44 +17,46 @@ multiple personas inhabiting one continuous reality.
 ## Design panorama
 
 ```text
-                          ALEPH
+                                  ALEPH
 
-    User / external world events
-                |
-                v
-    +---------------------------+
-    |       Reality Layer       |
-    |---------------------------|
-    | RealityThread             |
-    | Consequences              |
-    | Open loops                |
-    | Recent reality events     |
-    +---------------------------+
-                |
-                v
-    +---------------------------+
-    |      Orchestration        |
-    |---------------------------|
-    | ForegroundControl         |
-    | SwitchDaemon              |
-    | Handoff summary           |
-    | Switch log                |
-    +---------------------------+
-         |                 |
-         v                 v
-  +-------------+   +-------------+   +-------------+
-  | Persona A   |   | Persona B   |   | Persona C   |
-  |-------------|   |-------------|   |-------------|
-  | Private mem |   | Private mem |   | Private mem |
-  | Voice       |   | Voice       |   | Voice       |
-  | Lens        |   | Lens        |   | Lens        |
-  +-------------+   +-------------+   +-------------+
-         \                 |                 /
-          \                |                /
-           +--------------------------------+
-           |      SharedMemoryDomain        |
-           | commitments / social / facts   |
-           +--------------------------------+
+ User / external world events
+             |
+             v
+ +------------------------------------+      Reality Layer:
+ | Reality Layer                      |      preserves the single source of
+ |------------------------------------|      continuity, tracks what is still
+ | RealityThread    -> live truth     |      unresolved, and makes consequences
+ | Consequences     -> inherited cost |      visible to every future handoff.
+ | Open loops       -> unfinished     |
+ | Recent events    -> replay window  |
+ +------------------------------------+
+             |
+             v
+ +------------------------------------+      Orchestration Layer:
+ | Orchestration Layer                |      decides who holds foreground,
+ |------------------------------------|      explains why a switch happened,
+ | ForegroundControl -> one speaker   |      and packages the minimum context
+ | SwitchDaemon      -> handoff logic |      the next persona must inherit.
+ | Handoff summary   -> entry brief   |
+ | Switch log        -> traceability  |
+ +------------------------------------+
+      |                      |
+      v                      v
+ +----------------+  +----------------+  +----------------+   Persona Layer:
+ | Persona A      |  | Persona B      |  | Persona C      |   each persona carries a private
+ |----------------|  |----------------|  |----------------|   inner world: memory, voice,
+ | Private memory |  | Private memory |  | Private memory |   interpretation, and boundaries.
+ | Voice          |  | Voice          |  | Voice          |   They share one reality, not one
+ | Lens           |  | Lens           |  | Lens           |   subjective self.
+ | Boundaries     |  | Boundaries     |  | Boundaries     |
+ +----------------+  +----------------+  +----------------+
+      \                    |                    /
+       \                   |                   /
+        +-------------------------------------+  SharedMemoryDomain:
+        | SharedMemoryDomain                  |  stores the minimum common
+        | commitments / social / facts        |  ground needed for continuity
+        | low-bandwidth common ground         |  without collapsing all personas
+        +-------------------------------------+  into one blended narrator.
 ```
 
 ## Core model
