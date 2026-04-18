@@ -1,6 +1,6 @@
 # Aleph
 
-Aleph is a chat-first MVP for a multi-persona product where several persona sessions
+Aleph is a Python-first, chat-first MVP for a multi-persona product where several persona sessions
 share one continuous reality without sharing the same inner world.
 
 ## Product view
@@ -92,16 +92,21 @@ This layer makes switching legible and safe.
 - A continuous `RealityThread` with active consequences and open loops
 - Persona sessions with private memory and limited shared memory
 - A `SwitchDaemon` that handles manual and semi-automatic handoff
-- A runnable CLI prototype and scripted scenario
-- Tests for continuity, privacy, shared memory, and switch explanation
+- A runnable Python CLI prototype and scripted scenario
+- Python unit tests for continuity, privacy, shared memory, and switch explanation
+- Demo/test entry points use in-memory SQLite by default for portability in restricted runtimes
 
 ## Quick start
 
 ```bash
-node src/demo/scenario.js
-node src/demo/repl.js
-npm.cmd test
+python scripts/scenario.py
+python scripts/repl.py
+python scripts/run_tests.py
 ```
+
+If your shell does not expose `python`, the verified interpreter on this machine is:
+
+`C:\Program Files\AutoClaw\resources\python\python.exe`
 
 ## CLI commands
 
@@ -116,6 +121,10 @@ The product design plan lives at:
 
 `docs/plans/2026-04-18-aleph-mvp.md`
 
+Client isolation and nanobot-aligned runtime design live at:
+
+`docs/plans/2026-04-18-aleph-client-design.md`
+
 ## Roadmap
 
 ### Current MVP
@@ -125,6 +134,7 @@ The product design plan lives at:
 - single foreground persona model
 - semi-automatic switching with explanations
 - private memory, shared memory, and reality state separation
+- Python package layout aligned to nanobot-style runtime layering
 
 ### Next updates
 
