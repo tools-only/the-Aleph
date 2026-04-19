@@ -153,6 +153,7 @@ C:\Program Files\AutoClaw\resources\python\python.exe scripts\run_tests.py
 
 - [Aleph v1 plan](docs/plans/2026-04-18-aleph-mvp.md)
 - [Client runtime design notes](docs/plans/2026-04-18-aleph-client-design.md)
+- [Implementation summary and 7-day MVP delivery plan](docs/plans/2026-04-20-aleph-implementation-and-7day-plan.md)
 
 ## Roadmap
 
