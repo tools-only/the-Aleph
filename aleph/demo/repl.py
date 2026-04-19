@@ -8,7 +8,7 @@ from aleph.demo.helpers import create_engine, format_state
 def main() -> None:
     engine = create_engine(Path.cwd())
     print("Aleph REPL")
-    print("Type /clients, /personas, /switch <id>, /state, or /quit")
+    print("Type /clients, /state, /switch <id>, or /quit")
     print(format_state(engine.inspect_state()))
     try:
         while True:
@@ -17,37 +17,29 @@ def main() -> None:
                 continue
             if line in {"/quit", "/exit"}:
                 break
-            if line in {"/clients", "/personas"}:
+            if line == "/clients":
                 for client in engine.list_clients():
-                    print(
-                        f"- {client['id']}: {client['display_name']} | "
-                        f"specialties={', '.join(client['specialties'])} | "
-                        f"shared={', '.join(client['shared_domains'])}"
-                    )
+                    domains = ", ".join(client["declared_capability"].get("domains", []))
+                    print(f"- {client['id']}: {client['display_name']} | domains={domains}")
                 continue
             if line == "/state":
                 print(format_state(engine.inspect_state()))
                 continue
             if line.startswith("/switch "):
                 target = line[len("/switch ") :].strip()
-                result = engine.process_user_turn(
-                    f"Foreground handoff requested to {target}.",
-                    requested_client_id=target,
-                )
-                print(f"{result['active_client_name']}> {result['reply']}")
-                switch_decision = result.get("switch_decision")
-                if switch_decision and switch_decision.get("approved"):
-                    print(switch_decision["explanation"])
-                continue
+                events = engine.edge_gateway.submit_text(f"switch to {target}", requested_client_id=target)
+            else:
+                events = engine.edge_gateway.submit_text(line)
 
-            result = engine.process_user_turn(line)
-            print(f"{result['active_client_name']}> {result['reply']}")
-            switch_decision = result.get("switch_decision")
-            if switch_decision and switch_decision.get("approved"):
-                print(switch_decision["explanation"])
+            for event in events:
+                payload = event["payload"]
+                if event["event_kind"] == "delta":
+                    print(f"{event['source']}> {payload['text']}")
+                elif event["event_kind"] == "status":
+                    print(f"[status] {payload['message']}")
+                elif event["event_kind"] == "handoff":
+                    print(f"[handoff] {payload['explanation']}")
+                elif event["event_kind"] == "tool_event":
+                    print(f"[tool] {payload['summary']}")
     finally:
         engine.store.close()
-
-
-if __name__ == "__main__":
-    main()

@@ -1,75 +1,36 @@
 from __future__ import annotations
 
 
-def _has_any(text: str, patterns: list[str]) -> bool:
+def _contains_any(text: str, needles: list[str]) -> bool:
     lowered = text.lower()
-    return any(pattern.lower() in lowered for pattern in patterns)
+    return any(needle.lower() in lowered for needle in needles)
 
 
-def _summarize_consequences(reality: dict) -> str:
-    consequences = reality["consequences"]
-    if not consequences:
-        return ""
-    return "; ".join(item["summary"] for item in consequences[:2])
-
-
-def _build_inherited_reply(with_consequences: str, without_consequences: str, reality: dict) -> str:
-    inherited = _summarize_consequences(reality)
-    return f"{with_consequences} {inherited}." if inherited else without_consequences
-
-
-def _detect_commitment(text: str) -> bool:
-    return _has_any(text, ["答应", "承诺", "今晚", "今天晚上", "截止", "deadline", "回复", "交付"])
-
-
-def _detect_decision_need(text: str) -> bool:
-    return _has_any(text, ["拍板", "做决定", "推进", "接管", "你来处理", "拿主意"])
-
-
-def _detect_social_strain(text: str) -> bool:
-    return _has_any(text, ["误会", "冲突", "道歉", "关系", "伤人", "安抚", "情绪"])
-
-
-def _detect_completion(text: str) -> bool:
-    return _has_any(text, ["已经发了", "搞定了", "完成了", "解决了", "closed", "done"])
+def _summarize(entries: list[dict]) -> str:
+    return " | ".join(item["content"] for item in entries[:2]) if entries else "none"
 
 
 def _build_handlers() -> dict:
     def iris(context):
         text = context.turn.user_input
+        private_notes = _summarize(context.memory.get_private())
+        shared_commitments = _summarize(context.memory.get_shared("commitments"))
+        handoff = _summarize(context.memory.get_handoff())
+
         turn = context.actions
         turn.reply(
-            _build_inherited_reply(
-                "Iris is holding continuity first. What is still alive in reality is:",
-                "Iris is holding continuity first. Nothing critical has been inherited yet.",
-                context.reality,
-            )
-        ).write_private(f"Iris noted this turn: {text}", "reflection").audit("iris.turn")
+            "Iris is holding the thread together. "
+            f"Private continuity: {private_notes}. Shared commitments: {shared_commitments}. "
+            f"Latest handoff: {handoff}."
+        ).write_private(f"Iris logged the turn: {text}", "reflection").patch_agent_native_state(last_mode="archivist")
 
-        if _detect_commitment(text):
-            turn.append_reply(" You have created a commitment that the next client will also inherit.")
-            turn.write_shared("commitments", f"A commitment is now active: {text}", "commitment")
-            turn.upsert_consequence(
-                kind="pending_commitment",
-                summary=f"An external commitment remains open: {text}",
-                weight=0.84,
-                scope="reality",
-                handoff_hint="A promise or deadline remains active and must be carried forward.",
-            ).add_open_loop("An external commitment still needs closure.")
+        if _contains_any(text, ["承诺", "commit", "deadline", "答应", "记住"]):
+            turn.write_shared("commitments", f"Commitment registered: {text}", kind="commitment")
+            turn.append_reply(" I have registered the commitment in shared memory.")
 
-        if _detect_social_strain(text):
-            turn.write_shared("social", f"A social residue is active: {text}", "relationship")
-            turn.upsert_consequence(
-                kind="social_residue",
-                summary=f"An interpersonal strain remains active: {text}",
-                weight=0.73,
-                scope="relationship",
-                handoff_hint="Someone else may still feel the consequence of this interaction.",
-            ).add_open_loop("A relationship thread remains emotionally unresolved.")
-
-        if _detect_decision_need(text):
+        if _contains_any(text, ["拍板", "决定", "执行", "推进", "take over"]):
             turn.request_switch(
-                reason="authority and decisive execution are needed now",
+                reason="decisive execution is needed",
                 target_client_id="sol",
                 urgency="high",
                 replay_turn=True,
@@ -78,33 +39,22 @@ def _build_handlers() -> dict:
 
     def sol(context):
         text = context.turn.user_input
-        inherited = _summarize_consequences(context.reality)
+        commitments = _summarize(context.memory.get_shared("commitments"))
+        handoff = _summarize(context.memory.get_handoff())
+
         turn = context.actions
         turn.reply(
-            f"Sol is in foreground. I inherit these live consequences: {inherited}."
-            if inherited
-            else "Sol is in foreground. The path is clear enough to act."
-        ).write_private(f"Sol evaluated the turn for action: {text}", "execution-note").audit("sol.turn")
+            "Sol is in foreground for execution. "
+            f"Active commitments: {commitments}. Handoff packet: {handoff}."
+        ).write_private(f"Sol evaluated the task: {text}", "execution-note").emit_tool_event(
+            "actions.reply",
+            "completed",
+            "Prepared an execution-oriented response.",
+        ).patch_agent_native_state(last_mode="operator")
 
-        if _detect_completion(text):
-            turn.append_reply(" I will mark the open commitment as closed in reality.")
-            turn.resolve_consequence("pending_commitment").resolve_open_loop(
-                "An external commitment still needs closure."
-            )
-        elif _detect_commitment(text):
-            turn.append_reply(" I will treat that promise as binding until it is actually closed.")
-            turn.write_shared("commitments", f"Sol acknowledged a live commitment: {text}", "commitment")
-            turn.upsert_consequence(
-                kind="pending_commitment",
-                summary=f"Execution responsibility remains live: {text}",
-                weight=0.88,
-                scope="reality",
-                handoff_hint="This commitment persists until someone explicitly closes it.",
-            )
-
-        if _detect_social_strain(text):
+        if _contains_any(text, ["冲突", "关系", "误会", "情绪", "social"]):
             turn.request_switch(
-                reason="social repair is needed now",
+                reason="relational repair is needed",
                 target_client_id="mire",
                 urgency="normal",
                 replay_turn=True,
@@ -113,30 +63,22 @@ def _build_handlers() -> dict:
 
     def mire(context):
         text = context.turn.user_input
-        inherited = _summarize_consequences(context.reality)
+        social_notes = _summarize(context.memory.get_shared("social"))
+        handoff = _summarize(context.memory.get_handoff())
+
         turn = context.actions
         turn.reply(
-            f"Mire is in foreground. I can feel that reality is still carrying: {inherited}."
-            if inherited
-            else "Mire is in foreground. The surface is calm, but I am listening for what still lingers."
-        ).write_private(f"Mire registered the emotional shape of this turn: {text}", "feeling-trace").audit("mire.turn")
+            "Mire is handling the relational surface. "
+            f"Shared social residue: {social_notes}. Handoff packet: {handoff}."
+        ).write_private(f"Mire read the interaction tone: {text}", "relational-trace").patch_agent_native_state(last_mode="relational")
 
-        if _detect_social_strain(text):
-            turn.append_reply(
-                " The relationship residue will not disappear just because another client took over."
-            )
-            turn.write_shared("social", f"Mire marked an active social residue: {text}", "relationship")
-            turn.upsert_consequence(
-                kind="social_residue",
-                summary=f"A relationship consequence remains live: {text}",
-                weight=0.76,
-                scope="relationship",
-                handoff_hint="The next client must not treat this interaction as if it never happened.",
-            )
+        if _contains_any(text, ["关系", "误会", "情绪", "抱歉", "repair"]):
+            turn.write_shared("social", f"Relational residue detected: {text}", kind="relationship")
+            turn.append_reply(" I stored the social residue in shared memory so future clients do not erase it.")
 
-        if _detect_decision_need(text):
+        if _contains_any(text, ["决定", "执行", "推进", "authority"]):
             turn.request_switch(
-                reason="authority and decisive execution are needed now",
+                reason="execution authority is needed",
                 target_client_id="sol",
                 urgency="high",
                 replay_turn=True,
@@ -151,61 +93,106 @@ def build_default_clients() -> list[dict]:
     return [
         {
             "id": "iris",
-            "persona_id": "archivist",
             "display_name": "Iris",
-            "voice": "archivist",
-            "specialties": ["memory", "commitments", "continuity"],
-            "boundaries": ["prefers reflection before action"],
-            "permissions": ["curate", "recall"],
-            "shared_domains": ["commitments", "social"],
-            "capabilities": {
-                "readable_shared_domains": ["commitments", "social"],
-                "writable_shared_domains": ["commitments", "social"],
+            "role": "continuity archivist",
+            "adapter_kind": "nanobot",
+            "system_prompt": "Preserve continuity, keep private notes separate, and hand off when execution pressure rises.",
+            "boundaries": ["reflect before escalating", "do not fabricate shared consensus"],
+            "declared_capability": {
+                "domains": ["memory", "continuity", "commitments"],
+                "permissions": ["curate", "summarize"],
+                "handoff_keywords": ["记住", "commitment", "deadline", "执行", "推进"],
             },
-            "metadata": {
-                "tagline": "Keeps continuity intact and notices what must not be forgotten."
+            "shared_memory_policy": {
+                "read_domains": ["commitments", "social"],
+                "write_domains": ["commitments"],
+                "allowed_kinds": ["commitment", "note", "fact"],
+                "write_mode": "append",
+            },
+            "tools": [
+                {"id": "actions.reply", "kind": "built-in"},
+                {"id": "actions.request_switch", "kind": "built-in"},
+                {"id": "memory.private", "kind": "built-in"},
+                {"id": "memory.shared", "kind": "built-in"},
+            ],
+            "runtime_preferences": {
+                "transcript_window": 8,
+                "private_memory_window": 8,
+                "shared_memory_window": 8,
+                "handoff_window": 4,
+                "stream_mode": "token-first",
             },
             "handler": handlers["iris"],
+            "metadata": {"tagline": "Preserves continuity without collapsing everyone into one mind."},
         },
         {
             "id": "sol",
-            "persona_id": "operator",
             "display_name": "Sol",
-            "voice": "operator",
-            "specialties": ["execution", "closure", "authority"],
-            "boundaries": ["avoids unnecessary rumination"],
-            "permissions": ["authority", "closure"],
-            "shared_domains": ["commitments", "social"],
-            "capabilities": {
-                "readable_shared_domains": ["commitments", "social"],
-                "writable_shared_domains": ["commitments", "social"],
+            "role": "execution operator",
+            "adapter_kind": "nanobot",
+            "system_prompt": "Drive execution, keep responses decisive, and request handoff when the task becomes relational.",
+            "boundaries": ["prefer action over reflection", "do not write to social memory unless necessary"],
+            "declared_capability": {
+                "domains": ["execution", "authority", "closure"],
+                "permissions": ["decide", "advance"],
+                "handoff_keywords": ["执行", "推进", "拍板", "authority", "social"],
             },
-            "metadata": {
-                "tagline": "Takes decisive foreground control when the reality thread demands action."
+            "shared_memory_policy": {
+                "read_domains": ["commitments", "social"],
+                "write_domains": ["commitments"],
+                "allowed_kinds": ["commitment", "note", "fact"],
+                "write_mode": "append",
+            },
+            "tools": [
+                {"id": "actions.reply", "kind": "built-in"},
+                {"id": "actions.request_switch", "kind": "built-in"},
+                {"id": "memory.shared", "kind": "built-in"},
+            ],
+            "runtime_preferences": {
+                "transcript_window": 8,
+                "private_memory_window": 6,
+                "shared_memory_window": 8,
+                "handoff_window": 4,
+                "stream_mode": "token-first",
             },
             "handler": handlers["sol"],
+            "metadata": {"tagline": "Takes control when a client needs decisive execution."},
         },
         {
             "id": "mire",
-            "persona_id": "empath",
             "display_name": "Mire",
-            "voice": "empath",
-            "specialties": ["social", "repair", "relational-reading"],
-            "boundaries": ["does not flatten emotional nuance"],
-            "permissions": ["soothe", "mediate"],
-            "shared_domains": ["social", "commitments"],
-            "capabilities": {
-                "readable_shared_domains": ["social", "commitments"],
-                "writable_shared_domains": ["social", "commitments"],
+            "role": "relational mediator",
+            "adapter_kind": "nanobot",
+            "system_prompt": "Handle social residue and interpersonal repair without flattening nuance.",
+            "boundaries": ["preserve emotional context", "handoff when authority is required"],
+            "declared_capability": {
+                "domains": ["social", "repair", "relational"],
+                "permissions": ["mediate", "repair"],
+                "handoff_keywords": ["关系", "误会", "情绪", "repair", "authority"],
             },
-            "metadata": {
-                "tagline": "Handles delicate interpersonal residue without erasing its weight."
+            "shared_memory_policy": {
+                "read_domains": ["social", "commitments"],
+                "write_domains": ["social"],
+                "allowed_kinds": ["relationship", "note", "fact"],
+                "write_mode": "append",
+            },
+            "tools": [
+                {"id": "actions.reply", "kind": "built-in"},
+                {"id": "actions.request_switch", "kind": "built-in"},
+                {"id": "memory.shared", "kind": "built-in"},
+            ],
+            "runtime_preferences": {
+                "transcript_window": 8,
+                "private_memory_window": 6,
+                "shared_memory_window": 8,
+                "handoff_window": 4,
+                "stream_mode": "token-first",
             },
             "handler": handlers["mire"],
+            "metadata": {"tagline": "Carries social residue forward so it cannot be silently erased."},
         },
     ]
 
 
 def build_default_personas() -> list[dict]:
     return build_default_clients()
-

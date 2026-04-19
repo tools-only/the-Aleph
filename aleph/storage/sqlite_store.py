@@ -12,6 +12,10 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _dump_json(value) -> str:
+    return json.dumps(value if value is not None else None, ensure_ascii=False)
+
+
 def _parse_json(value: str | None, fallback):
     if not value:
         return fallback
@@ -21,12 +25,13 @@ def _parse_json(value: str | None, fallback):
         return fallback
 
 
-def _dump_json(value) -> str:
-    return json.dumps(value if value is not None else None, ensure_ascii=False)
-
-
 class SqliteStore:
-    def __init__(self, root_dir: str | Path | None = None, db_path: str | Path | None = None, now=None) -> None:
+    def __init__(
+        self,
+        root_dir: str | Path | None = None,
+        db_path: str | Path | None = None,
+        now=None,
+    ) -> None:
         self.root_dir = Path(root_dir or Path.cwd())
         self.data_dir = self.root_dir / "data"
         self.logs_dir = self.data_dir / "logs"
@@ -36,6 +41,7 @@ class SqliteStore:
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         if self.db_path != ":memory:":
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
         self.connection = sqlite3.connect(self.db_path)
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA foreign_keys = ON;")
@@ -47,114 +53,121 @@ class SqliteStore:
     def _init_schema(self) -> None:
         self.connection.executescript(
             """
-            CREATE TABLE IF NOT EXISTS client_profiles (
+            CREATE TABLE IF NOT EXISTS client_blueprints (
               id TEXT PRIMARY KEY,
-              persona_id TEXT NOT NULL,
               display_name TEXT NOT NULL,
-              voice TEXT NOT NULL,
-              specialties_json TEXT NOT NULL,
+              role TEXT NOT NULL,
+              system_prompt TEXT NOT NULL,
+              adapter_kind TEXT NOT NULL,
               boundaries_json TEXT NOT NULL,
-              permissions_json TEXT NOT NULL,
-              shared_domains_json TEXT NOT NULL,
-              readable_shared_domains_json TEXT NOT NULL,
-              writable_shared_domains_json TEXT NOT NULL,
-              allowed_actions_json TEXT NOT NULL,
-              request_only_actions_json TEXT NOT NULL,
-              allowed_tools_json TEXT NOT NULL,
-              isolation_json TEXT NOT NULL,
+              declared_capability_json TEXT NOT NULL,
+              shared_memory_policy_json TEXT NOT NULL,
+              tools_json TEXT NOT NULL,
+              handoff_rules_json TEXT NOT NULL,
+              runtime_preferences_json TEXT NOT NULL,
               metadata_json TEXT NOT NULL,
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS client_sessions (
+            CREATE TABLE IF NOT EXISTS client_instances (
               id TEXT PRIMARY KEY,
-              client_id TEXT NOT NULL,
+              blueprint_id TEXT NOT NULL,
+              adapter_kind TEXT NOT NULL,
               status TEXT NOT NULL,
-              handoff_summary TEXT,
-              last_runtime_lens TEXT,
+              runtime_signals_json TEXT NOT NULL,
+              agent_native_state_json TEXT NOT NULL,
+              metadata_json TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY(blueprint_id) REFERENCES client_blueprints(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS sessions (
+              id TEXT PRIMARY KEY,
+              title TEXT NOT NULL,
+              status TEXT NOT NULL,
+              foreground_client_id TEXT NOT NULL,
+              foreground_reason TEXT NOT NULL,
+              memory_epoch INTEGER NOT NULL,
+              tool_epoch INTEGER NOT NULL,
+              policy_epoch INTEGER NOT NULL,
+              metadata_json TEXT NOT NULL,
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS client_turns (
+            CREATE TABLE IF NOT EXISTS session_turns (
               id TEXT PRIMARY KEY,
-              client_id TEXT NOT NULL,
               session_id TEXT NOT NULL,
+              client_id TEXT,
               role TEXT NOT NULL,
               content TEXT NOT NULL,
               visibility TEXT NOT NULL,
               source_event_id TEXT,
               metadata_json TEXT NOT NULL,
-              created_at TEXT NOT NULL
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(session_id) REFERENCES sessions(id)
             );
 
-            CREATE TABLE IF NOT EXISTS memories (
+            CREATE TABLE IF NOT EXISTS session_events (
               id TEXT PRIMARY KEY,
+              session_id TEXT NOT NULL,
+              channel TEXT NOT NULL,
+              event_kind TEXT NOT NULL,
+              source TEXT NOT NULL,
+              payload_json TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(session_id) REFERENCES sessions(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS memory_records (
+              id TEXT PRIMARY KEY,
+              session_id TEXT NOT NULL,
               layer TEXT NOT NULL,
-              persona_id TEXT,
+              owner_client_id TEXT,
               domain TEXT,
               kind TEXT NOT NULL,
               content TEXT NOT NULL,
-              metadata_json TEXT NOT NULL,
-              created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS reality_threads (
-              id TEXT PRIMARY KEY,
-              title TEXT NOT NULL,
-              summary TEXT NOT NULL,
-              active_scene TEXT NOT NULL,
-              open_loops_json TEXT NOT NULL,
+              write_mode TEXT NOT NULL,
               metadata_json TEXT NOT NULL,
               created_at TEXT NOT NULL,
-              updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS reality_events (
-              id TEXT PRIMARY KEY,
-              thread_id TEXT NOT NULL,
-              type TEXT NOT NULL,
-              source TEXT NOT NULL,
-              summary TEXT NOT NULL,
-              payload_json TEXT NOT NULL,
-              created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS consequences (
-              id TEXT PRIMARY KEY,
-              thread_id TEXT NOT NULL,
-              kind TEXT NOT NULL,
-              source_event_id TEXT NOT NULL,
-              summary TEXT NOT NULL,
-              status TEXT NOT NULL,
-              weight REAL NOT NULL,
-              scope TEXT NOT NULL,
-              handoff_hint TEXT NOT NULL,
-              metadata_json TEXT NOT NULL,
-              created_at TEXT NOT NULL,
-              updated_at TEXT NOT NULL
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY(session_id) REFERENCES sessions(id)
             );
 
             CREATE TABLE IF NOT EXISTS switch_logs (
               id TEXT PRIMARY KEY,
+              session_id TEXT NOT NULL,
               from_client_id TEXT,
               to_client_id TEXT NOT NULL,
-              from_persona_id TEXT,
-              to_persona_id TEXT NOT NULL,
               reason TEXT NOT NULL,
+              trigger TEXT NOT NULL,
               explanation TEXT NOT NULL,
               handoff_summary TEXT NOT NULL,
-              trigger TEXT NOT NULL,
-              created_at TEXT NOT NULL
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(session_id) REFERENCES sessions(id)
             );
 
-            CREATE TABLE IF NOT EXISTS foreground_control (
-              slot TEXT PRIMARY KEY,
-              thread_id TEXT NOT NULL,
-              client_id TEXT NOT NULL,
+            CREATE TABLE IF NOT EXISTS projection_cache (
+              cache_key TEXT PRIMARY KEY,
+              projection_type TEXT NOT NULL,
               session_id TEXT NOT NULL,
+              client_id TEXT NOT NULL,
+              value_json TEXT NOT NULL,
+              metadata_json TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS prewarm_jobs (
+              id TEXT PRIMARY KEY,
+              session_id TEXT NOT NULL,
+              client_id TEXT NOT NULL,
+              status TEXT NOT NULL,
               reason TEXT NOT NULL,
+              payload_json TEXT NOT NULL,
+              created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL
             );
             """
@@ -166,115 +179,203 @@ class SqliteStore:
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
-    def save_client_profile(self, profile: dict) -> None:
+    def save_client_blueprint(self, blueprint: dict) -> dict:
         now = self.now()
+        current = self.get_client_blueprint(blueprint["id"])
+        created_at = current["created_at"] if current else now
         self.connection.execute(
             """
-            INSERT INTO client_profiles (
-              id, persona_id, display_name, voice, specialties_json, boundaries_json,
-              permissions_json, shared_domains_json, readable_shared_domains_json,
-              writable_shared_domains_json, allowed_actions_json,
-              request_only_actions_json, allowed_tools_json, isolation_json,
-              metadata_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO client_blueprints (
+              id, display_name, role, system_prompt, adapter_kind, boundaries_json,
+              declared_capability_json, shared_memory_policy_json, tools_json,
+              handoff_rules_json, runtime_preferences_json, metadata_json,
+              created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
-              persona_id = excluded.persona_id,
               display_name = excluded.display_name,
-              voice = excluded.voice,
-              specialties_json = excluded.specialties_json,
+              role = excluded.role,
+              system_prompt = excluded.system_prompt,
+              adapter_kind = excluded.adapter_kind,
               boundaries_json = excluded.boundaries_json,
-              permissions_json = excluded.permissions_json,
-              shared_domains_json = excluded.shared_domains_json,
-              readable_shared_domains_json = excluded.readable_shared_domains_json,
-              writable_shared_domains_json = excluded.writable_shared_domains_json,
-              allowed_actions_json = excluded.allowed_actions_json,
-              request_only_actions_json = excluded.request_only_actions_json,
-              allowed_tools_json = excluded.allowed_tools_json,
-              isolation_json = excluded.isolation_json,
+              declared_capability_json = excluded.declared_capability_json,
+              shared_memory_policy_json = excluded.shared_memory_policy_json,
+              tools_json = excluded.tools_json,
+              handoff_rules_json = excluded.handoff_rules_json,
+              runtime_preferences_json = excluded.runtime_preferences_json,
               metadata_json = excluded.metadata_json,
               updated_at = excluded.updated_at
             """,
             (
-                profile["id"],
-                profile["persona_id"],
-                profile["display_name"],
-                profile["voice"],
-                _dump_json(profile["specialties"]),
-                _dump_json(profile["boundaries"]),
-                _dump_json(profile["permissions"]),
-                _dump_json(profile["shared_domains"]),
-                _dump_json(profile["capabilities"]["readable_shared_domains"]),
-                _dump_json(profile["capabilities"]["writable_shared_domains"]),
-                _dump_json(profile["capabilities"]["allowed_actions"]),
-                _dump_json(profile["capabilities"]["request_only_actions"]),
-                _dump_json(profile["capabilities"]["allowed_tools"]),
-                _dump_json(profile["isolation"]),
-                _dump_json(profile["metadata"]),
-                now,
+                blueprint["id"],
+                blueprint["display_name"],
+                blueprint["role"],
+                blueprint["system_prompt"],
+                blueprint["adapter_kind"],
+                _dump_json(blueprint["boundaries"]),
+                _dump_json(blueprint["declared_capability"]),
+                _dump_json(blueprint["shared_memory_policy"]),
+                _dump_json(blueprint["tools"]),
+                _dump_json(blueprint["handoff_rules"]),
+                _dump_json(blueprint["runtime_preferences"]),
+                _dump_json(blueprint["metadata"]),
+                created_at,
                 now,
             ),
         )
         self.connection.commit()
+        return self.get_client_blueprint(blueprint["id"])
 
-    def _map_client_profile(self, row: sqlite3.Row) -> dict:
+    def _map_client_blueprint(self, row: sqlite3.Row) -> dict:
         return {
             "id": row["id"],
-            "persona_id": row["persona_id"],
             "display_name": row["display_name"],
-            "name": row["display_name"],
-            "voice": row["voice"],
-            "specialties": _parse_json(row["specialties_json"], []),
+            "role": row["role"],
+            "system_prompt": row["system_prompt"],
+            "adapter_kind": row["adapter_kind"],
             "boundaries": _parse_json(row["boundaries_json"], []),
-            "permissions": _parse_json(row["permissions_json"], []),
-            "shared_domains": _parse_json(row["shared_domains_json"], []),
-            "capabilities": {
-                "readable_shared_domains": _parse_json(row["readable_shared_domains_json"], []),
-                "writable_shared_domains": _parse_json(row["writable_shared_domains_json"], []),
-                "allowed_actions": _parse_json(row["allowed_actions_json"], []),
-                "request_only_actions": _parse_json(row["request_only_actions_json"], []),
-                "allowed_tools": _parse_json(row["allowed_tools_json"], []),
-            },
-            "isolation": _parse_json(row["isolation_json"], {}),
+            "declared_capability": _parse_json(row["declared_capability_json"], {}),
+            "shared_memory_policy": _parse_json(row["shared_memory_policy_json"], {}),
+            "tools": _parse_json(row["tools_json"], []),
+            "handoff_rules": _parse_json(row["handoff_rules_json"], {}),
+            "runtime_preferences": _parse_json(row["runtime_preferences_json"], {}),
             "metadata": _parse_json(row["metadata_json"], {}),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
 
-    def get_client_profile(self, client_id: str) -> dict | None:
+    def get_client_blueprint(self, client_id: str) -> dict | None:
         row = self.connection.execute(
-            "SELECT * FROM client_profiles WHERE id = ?", (client_id,)
+            "SELECT * FROM client_blueprints WHERE id = ?",
+            (client_id,),
         ).fetchone()
-        return self._map_client_profile(row) if row else None
+        return self._map_client_blueprint(row) if row else None
 
-    def list_client_profiles(self) -> list[dict]:
+    def list_client_blueprints(self) -> list[dict]:
         rows = self.connection.execute(
-            "SELECT * FROM client_profiles ORDER BY created_at ASC"
+            "SELECT * FROM client_blueprints ORDER BY created_at ASC"
         ).fetchall()
-        return [self._map_client_profile(row) for row in rows]
+        return [self._map_client_blueprint(row) for row in rows]
 
-    def create_client_session(self, payload: dict) -> dict:
+    def save_client_instance(self, instance: dict) -> dict:
+        now = self.now()
+        current = self.get_client_instance(instance["id"])
+        created_at = current["created_at"] if current else now
+        self.connection.execute(
+            """
+            INSERT INTO client_instances (
+              id, blueprint_id, adapter_kind, status, runtime_signals_json,
+              agent_native_state_json, metadata_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              blueprint_id = excluded.blueprint_id,
+              adapter_kind = excluded.adapter_kind,
+              status = excluded.status,
+              runtime_signals_json = excluded.runtime_signals_json,
+              agent_native_state_json = excluded.agent_native_state_json,
+              metadata_json = excluded.metadata_json,
+              updated_at = excluded.updated_at
+            """,
+            (
+                instance["id"],
+                instance["blueprint_id"],
+                instance["adapter_kind"],
+                instance.get("status", "ready"),
+                _dump_json(instance.get("runtime_signals", {})),
+                _dump_json(instance.get("agent_native_state", {})),
+                _dump_json(instance.get("metadata", {})),
+                created_at,
+                now,
+            ),
+        )
+        self.connection.commit()
+        return self.get_client_instance(instance["id"])
+
+    def _map_client_instance(self, row: sqlite3.Row) -> dict:
+        return {
+            "id": row["id"],
+            "blueprint_id": row["blueprint_id"],
+            "adapter_kind": row["adapter_kind"],
+            "status": row["status"],
+            "runtime_signals": _parse_json(row["runtime_signals_json"], {}),
+            "agent_native_state": _parse_json(row["agent_native_state_json"], {}),
+            "metadata": _parse_json(row["metadata_json"], {}),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def get_client_instance(self, client_id: str) -> dict | None:
+        row = self.connection.execute(
+            "SELECT * FROM client_instances WHERE id = ?",
+            (client_id,),
+        ).fetchone()
+        return self._map_client_instance(row) if row else None
+
+    def list_client_instances(self) -> list[dict]:
+        rows = self.connection.execute(
+            "SELECT * FROM client_instances ORDER BY created_at ASC"
+        ).fetchall()
+        return [self._map_client_instance(row) for row in rows]
+
+    def update_client_runtime_state(
+        self,
+        client_id: str,
+        *,
+        runtime_signals_patch: dict | None = None,
+        agent_native_state_patch: dict | None = None,
+    ) -> dict:
+        current = self.get_client_instance(client_id)
+        if not current:
+            raise ValueError(f"Client instance '{client_id}' not found")
+        runtime_signals = {**current["runtime_signals"], **(runtime_signals_patch or {})}
+        agent_native_state = {**current["agent_native_state"], **(agent_native_state_patch or {})}
+        self.connection.execute(
+            """
+            UPDATE client_instances
+            SET runtime_signals_json = ?, agent_native_state_json = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                _dump_json(runtime_signals),
+                _dump_json(agent_native_state),
+                self.now(),
+                client_id,
+            ),
+        )
+        self.connection.commit()
+        return self.get_client_instance(client_id)
+
+    def create_session(self, payload: dict) -> dict:
         now = self.now()
         session = {
-            "id": create_id("client_session"),
-            "client_id": payload["client_id"],
-            "status": payload.get("status", "standby"),
-            "handoff_summary": payload.get("handoff_summary", ""),
-            "last_runtime_lens": payload.get("last_runtime_lens", ""),
+            "id": create_id("session"),
+            "title": payload.get("title", "Aleph Session"),
+            "status": payload.get("status", "active"),
+            "foreground_client_id": payload["foreground_client_id"],
+            "foreground_reason": payload.get("foreground_reason", "bootstrap"),
+            "memory_epoch": payload.get("memory_epoch", 1),
+            "tool_epoch": payload.get("tool_epoch", 1),
+            "policy_epoch": payload.get("policy_epoch", 1),
+            "metadata": payload.get("metadata", {}),
             "created_at": now,
             "updated_at": now,
         }
         self.connection.execute(
             """
-            INSERT INTO client_sessions (
-              id, client_id, status, handoff_summary, last_runtime_lens, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO sessions (
+              id, title, status, foreground_client_id, foreground_reason,
+              memory_epoch, tool_epoch, policy_epoch, metadata_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session["id"],
-                session["client_id"],
+                session["title"],
                 session["status"],
-                session["handoff_summary"],
-                session["last_runtime_lens"],
+                session["foreground_client_id"],
+                session["foreground_reason"],
+                session["memory_epoch"],
+                session["tool_epoch"],
+                session["policy_epoch"],
+                _dump_json(session["metadata"]),
                 session["created_at"],
                 session["updated_at"],
             ),
@@ -282,11 +383,79 @@ class SqliteStore:
         self.connection.commit()
         return session
 
-    def append_client_turn(self, payload: dict) -> dict:
+    def _map_session(self, row: sqlite3.Row) -> dict:
+        return {
+            "id": row["id"],
+            "title": row["title"],
+            "status": row["status"],
+            "foreground_client_id": row["foreground_client_id"],
+            "foreground_reason": row["foreground_reason"],
+            "memory_epoch": row["memory_epoch"],
+            "tool_epoch": row["tool_epoch"],
+            "policy_epoch": row["policy_epoch"],
+            "metadata": _parse_json(row["metadata_json"], {}),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def get_session(self, session_id: str) -> dict | None:
+        row = self.connection.execute(
+            "SELECT * FROM sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+        return self._map_session(row) if row else None
+
+    def get_latest_session(self) -> dict | None:
+        row = self.connection.execute(
+            "SELECT * FROM sessions ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        return self._map_session(row) if row else None
+
+    def set_foreground_client(self, session_id: str, client_id: str, reason: str) -> dict:
+        self.connection.execute(
+            """
+            UPDATE sessions
+            SET foreground_client_id = ?, foreground_reason = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (client_id, reason, self.now(), session_id),
+        )
+        self.connection.commit()
+        return self.get_session(session_id)
+
+    def bump_session_epochs(
+        self,
+        session_id: str,
+        *,
+        memory_delta: int = 0,
+        tool_delta: int = 0,
+        policy_delta: int = 0,
+    ) -> dict:
+        current = self.get_session(session_id)
+        if not current:
+            raise ValueError(f"Session '{session_id}' not found")
+        self.connection.execute(
+            """
+            UPDATE sessions
+            SET memory_epoch = ?, tool_epoch = ?, policy_epoch = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                current["memory_epoch"] + memory_delta,
+                current["tool_epoch"] + tool_delta,
+                current["policy_epoch"] + policy_delta,
+                self.now(),
+                session_id,
+            ),
+        )
+        self.connection.commit()
+        return self.get_session(session_id)
+
+    def append_session_turn(self, payload: dict) -> dict:
         record = {
-            "id": create_id("client_turn"),
-            "client_id": payload["client_id"],
+            "id": create_id("turn"),
             "session_id": payload["session_id"],
+            "client_id": payload.get("client_id"),
             "role": payload["role"],
             "content": payload["content"],
             "visibility": payload.get("visibility", "private"),
@@ -296,15 +465,15 @@ class SqliteStore:
         }
         self.connection.execute(
             """
-            INSERT INTO client_turns (
-              id, client_id, session_id, role, content, visibility,
+            INSERT INTO session_turns (
+              id, session_id, client_id, role, content, visibility,
               source_event_id, metadata_json, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record["id"],
-                record["client_id"],
                 record["session_id"],
+                record["client_id"],
                 record["role"],
                 record["content"],
                 record["visibility"],
@@ -316,21 +485,38 @@ class SqliteStore:
         self.connection.commit()
         return record
 
-    def list_client_turns(self, client_id: str, limit: int = 12) -> list[dict]:
-        rows = self.connection.execute(
-            """
-            SELECT * FROM client_turns
-            WHERE client_id = ?
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            (client_id, limit),
-        ).fetchall()
+    def list_session_turns(
+        self,
+        session_id: str,
+        *,
+        client_id: str | None = None,
+        limit: int = 12,
+    ) -> list[dict]:
+        if client_id:
+            rows = self.connection.execute(
+                """
+                SELECT * FROM session_turns
+                WHERE session_id = ? AND client_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (session_id, client_id, limit),
+            ).fetchall()
+        else:
+            rows = self.connection.execute(
+                """
+                SELECT * FROM session_turns
+                WHERE session_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
         return [
             {
                 "id": row["id"],
-                "client_id": row["client_id"],
                 "session_id": row["session_id"],
+                "client_id": row["client_id"],
                 "role": row["role"],
                 "content": row["content"],
                 "visibility": row["visibility"],
@@ -341,364 +527,158 @@ class SqliteStore:
             for row in rows
         ]
 
-    def save_memory(self, payload: dict) -> dict:
+    def append_session_event(self, payload: dict) -> dict:
         record = {
-            "id": create_id("mem"),
-            "layer": payload["layer"],
-            "persona_id": payload.get("persona_id"),
-            "domain": payload.get("domain"),
-            "kind": payload.get("kind", "note"),
-            "content": payload["content"],
-            "metadata": payload.get("metadata", {}),
-            "created_at": payload.get("created_at", self.now()),
-        }
-        self.connection.execute(
-            """
-            INSERT INTO memories (
-              id, layer, persona_id, domain, kind, content, metadata_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                record["id"],
-                record["layer"],
-                record["persona_id"],
-                record["domain"],
-                record["kind"],
-                record["content"],
-                _dump_json(record["metadata"]),
-                record["created_at"],
-            ),
-        )
-        self.connection.commit()
-        return record
-
-    def list_memories(self, filter_payload: dict | None = None) -> list[dict]:
-        filter_payload = filter_payload or {}
-        limit = filter_payload.get("limit", 20)
-        layer = filter_payload.get("layer")
-        if layer == "shared":
-            domains = filter_payload.get("domains", [])
-            if not domains:
-                return []
-            placeholders = ", ".join("?" for _ in domains)
-            rows = self.connection.execute(
-                f"""
-                SELECT * FROM memories
-                WHERE layer = 'shared' AND domain IN ({placeholders})
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                (*domains, limit),
-            ).fetchall()
-        elif layer == "private":
-            rows = self.connection.execute(
-                """
-                SELECT * FROM memories
-                WHERE layer = 'private' AND persona_id = ?
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                (filter_payload["persona_id"], limit),
-            ).fetchall()
-        elif layer == "reality-note":
-            rows = self.connection.execute(
-                """
-                SELECT * FROM memories
-                WHERE layer = 'reality-note'
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                (limit,),
-            ).fetchall()
-        else:
-            rows = self.connection.execute(
-                "SELECT * FROM memories ORDER BY created_at DESC LIMIT ?", (limit,)
-            ).fetchall()
-        return [
-            {
-                "id": row["id"],
-                "layer": row["layer"],
-                "persona_id": row["persona_id"],
-                "domain": row["domain"],
-                "kind": row["kind"],
-                "content": row["content"],
-                "metadata": _parse_json(row["metadata_json"], {}),
-                "created_at": row["created_at"],
-            }
-            for row in rows
-        ]
-
-    def create_reality_thread(self, payload: dict | None = None) -> dict:
-        payload = payload or {}
-        now = self.now()
-        thread = {
-            "id": create_id("thread"),
-            "title": payload.get("title", "Aleph Reality Thread"),
-            "summary": payload.get("summary", "Reality is active and continuous."),
-            "active_scene": payload.get("active_scene", payload.get("activeScene", "The conversation has just begun.")),
-            "open_loops": payload.get("open_loops", payload.get("openLoops", [])),
-            "metadata": payload.get("metadata", {}),
-            "created_at": now,
-            "updated_at": now,
-        }
-        self.connection.execute(
-            """
-            INSERT INTO reality_threads (
-              id, title, summary, active_scene, open_loops_json, metadata_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                thread["id"],
-                thread["title"],
-                thread["summary"],
-                thread["active_scene"],
-                _dump_json(thread["open_loops"]),
-                _dump_json(thread["metadata"]),
-                thread["created_at"],
-                thread["updated_at"],
-            ),
-        )
-        self.connection.commit()
-        return thread
-
-    def get_latest_reality_thread(self) -> dict | None:
-        row = self.connection.execute(
-            "SELECT * FROM reality_threads ORDER BY created_at DESC LIMIT 1"
-        ).fetchone()
-        if not row:
-            return None
-        return {
-            "id": row["id"],
-            "title": row["title"],
-            "summary": row["summary"],
-            "active_scene": row["active_scene"],
-            "open_loops": _parse_json(row["open_loops_json"], []),
-            "metadata": _parse_json(row["metadata_json"], {}),
-            "created_at": row["created_at"],
-            "updated_at": row["updated_at"],
-        }
-
-    def update_reality_thread(self, thread_id: str, patch: dict) -> dict:
-        current = self.get_latest_reality_thread()
-        if not current or current["id"] != thread_id:
-            raise ValueError(f"Reality thread '{thread_id}' not found")
-        next_thread = {
-            **current,
-            "summary": patch.get("summary", current["summary"]),
-            "active_scene": patch.get("active_scene", patch.get("activeScene", current["active_scene"])),
-            "open_loops": patch.get("open_loops", patch.get("openLoops", current["open_loops"])),
-            "metadata": patch.get("metadata", current["metadata"]),
-            "updated_at": self.now(),
-        }
-        self.connection.execute(
-            """
-            UPDATE reality_threads
-            SET summary = ?, active_scene = ?, open_loops_json = ?, metadata_json = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (
-                next_thread["summary"],
-                next_thread["active_scene"],
-                _dump_json(next_thread["open_loops"]),
-                _dump_json(next_thread["metadata"]),
-                next_thread["updated_at"],
-                thread_id,
-            ),
-        )
-        self.connection.commit()
-        return next_thread
-
-    def append_reality_event(self, payload: dict) -> dict:
-        record = {
-            "id": payload.get("id", create_id("evt")),
-            "thread_id": payload["thread_id"],
-            "type": payload["type"],
-            "source": payload["source"],
-            "summary": payload["summary"],
+            "id": create_id("event"),
+            "session_id": payload["session_id"],
+            "channel": payload["channel"],
+            "event_kind": payload["event_kind"],
+            "source": payload.get("source", "aleph"),
             "payload": payload.get("payload", {}),
             "created_at": payload.get("created_at", self.now()),
         }
         self.connection.execute(
             """
-            INSERT INTO reality_events (
-              id, thread_id, type, source, summary, payload_json, created_at
+            INSERT INTO session_events (
+              id, session_id, channel, event_kind, source, payload_json, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record["id"],
-                record["thread_id"],
-                record["type"],
+                record["session_id"],
+                record["channel"],
+                record["event_kind"],
                 record["source"],
-                record["summary"],
                 _dump_json(record["payload"]),
                 record["created_at"],
             ),
         )
         self.connection.commit()
-        self._append_jsonl("reality-events.jsonl", record)
+        self._append_jsonl(f"{record['channel']}-events.jsonl", record)
         return record
 
-    def list_recent_reality_events(self, thread_id: str, limit: int = 10) -> list[dict]:
-        rows = self.connection.execute(
-            """
-            SELECT * FROM reality_events
-            WHERE thread_id = ?
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            (thread_id, limit),
-        ).fetchall()
+    def list_session_events(
+        self,
+        session_id: str,
+        *,
+        channel: str | None = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        if channel:
+            rows = self.connection.execute(
+                """
+                SELECT * FROM session_events
+                WHERE session_id = ? AND channel = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (session_id, channel, limit),
+            ).fetchall()
+        else:
+            rows = self.connection.execute(
+                """
+                SELECT * FROM session_events
+                WHERE session_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
         return [
             {
                 "id": row["id"],
-                "thread_id": row["thread_id"],
-                "type": row["type"],
+                "session_id": row["session_id"],
+                "channel": row["channel"],
+                "event_kind": row["event_kind"],
                 "source": row["source"],
-                "summary": row["summary"],
                 "payload": _parse_json(row["payload_json"], {}),
                 "created_at": row["created_at"],
             }
             for row in rows
         ]
 
-    def upsert_consequence(self, payload: dict) -> dict:
-        existing = self.connection.execute(
-            """
-            SELECT * FROM consequences
-            WHERE thread_id = ? AND kind = ? AND status = 'active'
-            ORDER BY updated_at DESC
-            LIMIT 1
-            """,
-            (payload["thread_id"], payload["kind"]),
-        ).fetchone()
+    def save_memory(self, payload: dict) -> dict:
         now = self.now()
-
-        if existing:
-            record = {
-                "id": existing["id"],
-                "thread_id": existing["thread_id"],
-                "kind": existing["kind"],
-                "source_event_id": payload.get("source_event_id", existing["source_event_id"]),
-                "summary": payload.get("summary", existing["summary"]),
-                "status": payload.get("status", existing["status"]),
-                "weight": payload.get("weight", existing["weight"]),
-                "scope": payload.get("scope", existing["scope"]),
-                "handoff_hint": payload.get("handoff_hint", existing["handoff_hint"]),
-                "metadata": payload.get("metadata", _parse_json(existing["metadata_json"], {})),
-                "created_at": existing["created_at"],
-                "updated_at": now,
-            }
-            self.connection.execute(
-                """
-                UPDATE consequences
-                SET source_event_id = ?, summary = ?, status = ?, weight = ?, scope = ?,
-                    handoff_hint = ?, metadata_json = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (
-                    record["source_event_id"],
-                    record["summary"],
-                    record["status"],
-                    record["weight"],
-                    record["scope"],
-                    record["handoff_hint"],
-                    _dump_json(record["metadata"]),
-                    record["updated_at"],
-                    record["id"],
-                ),
-            )
-            self.connection.commit()
-            return record
-
         record = {
-            "id": create_id("conseq"),
-            "thread_id": payload["thread_id"],
-            "kind": payload["kind"],
-            "source_event_id": payload["source_event_id"],
-            "summary": payload["summary"],
-            "status": payload.get("status", "active"),
-            "weight": payload.get("weight", 0.5),
-            "scope": payload.get("scope", "reality"),
-            "handoff_hint": payload.get("handoff_hint", ""),
+            "id": create_id("mem"),
+            "session_id": payload["session_id"],
+            "layer": payload["layer"],
+            "owner_client_id": payload.get("owner_client_id"),
+            "domain": payload.get("domain"),
+            "kind": payload.get("kind", "note"),
+            "content": payload["content"],
+            "write_mode": payload.get("write_mode", "append"),
             "metadata": payload.get("metadata", {}),
             "created_at": now,
             "updated_at": now,
         }
         self.connection.execute(
             """
-            INSERT INTO consequences (
-              id, thread_id, kind, source_event_id, summary, status,
-              weight, scope, handoff_hint, metadata_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO memory_records (
+              id, session_id, layer, owner_client_id, domain, kind, content, write_mode,
+              metadata_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record["id"],
-                record["thread_id"],
+                record["session_id"],
+                record["layer"],
+                record["owner_client_id"],
+                record["domain"],
                 record["kind"],
-                record["source_event_id"],
-                record["summary"],
-                record["status"],
-                record["weight"],
-                record["scope"],
-                record["handoff_hint"],
+                record["content"],
+                record["write_mode"],
                 _dump_json(record["metadata"]),
                 record["created_at"],
                 record["updated_at"],
             ),
         )
         self.connection.commit()
+
+        if record["layer"] in {"private", "shared", "handoff"}:
+            self.bump_session_epochs(record["session_id"], memory_delta=1)
         return record
 
-    def resolve_consequence(self, payload: dict) -> dict | None:
-        if payload.get("id"):
-            row = self.connection.execute(
-                "SELECT * FROM consequences WHERE id = ?", (payload["id"],)
-            ).fetchone()
-        else:
-            row = self.connection.execute(
-                """
-                SELECT * FROM consequences
-                WHERE thread_id = ? AND kind = ? AND status = 'active'
-                ORDER BY updated_at DESC
-                LIMIT 1
-                """,
-                (payload["thread_id"], payload["kind"]),
-            ).fetchone()
-        if not row:
-            return None
-        updated_at = self.now()
-        self.connection.execute(
-            "UPDATE consequences SET status = 'resolved', updated_at = ? WHERE id = ?",
-            (updated_at, row["id"]),
-        )
-        self.connection.commit()
-        return {
-            "id": row["id"],
-            "kind": row["kind"],
-            "status": "resolved",
-            "updated_at": updated_at,
-        }
-
-    def list_consequences(self, thread_id: str, status: str = "active") -> list[dict]:
-        rows = self.connection.execute(
-            """
-            SELECT * FROM consequences
-            WHERE thread_id = ? AND status = ?
-            ORDER BY weight DESC, updated_at DESC
-            """,
-            (thread_id, status),
-        ).fetchall()
+    def list_memories(self, filter_payload: dict) -> list[dict]:
+        session_id = filter_payload["session_id"]
+        limit = filter_payload.get("limit", 20)
+        layer = filter_payload.get("layer")
+        params: list[object] = [session_id]
+        clauses = ["session_id = ?"]
+        if layer:
+            clauses.append("layer = ?")
+            params.append(layer)
+        owner_client_id = filter_payload.get("owner_client_id")
+        if owner_client_id is not None:
+            clauses.append("owner_client_id = ?")
+            params.append(owner_client_id)
+        domain = filter_payload.get("domain")
+        if domain is not None:
+            clauses.append("domain = ?")
+            params.append(domain)
+        domains = filter_payload.get("domains")
+        if domains:
+            placeholders = ", ".join("?" for _ in domains)
+            clauses.append(f"domain IN ({placeholders})")
+            params.extend(domains)
+        query = f"""
+            SELECT * FROM memory_records
+            WHERE {" AND ".join(clauses)}
+            ORDER BY created_at DESC
+            LIMIT ?
+        """
+        params.append(limit)
+        rows = self.connection.execute(query, tuple(params)).fetchall()
         return [
             {
                 "id": row["id"],
-                "thread_id": row["thread_id"],
+                "session_id": row["session_id"],
+                "layer": row["layer"],
+                "owner_client_id": row["owner_client_id"],
+                "domain": row["domain"],
                 "kind": row["kind"],
-                "source_event_id": row["source_event_id"],
-                "summary": row["summary"],
-                "status": row["status"],
-                "weight": row["weight"],
-                "scope": row["scope"],
-                "handoff_hint": row["handoff_hint"],
+                "content": row["content"],
+                "write_mode": row["write_mode"],
                 "metadata": _parse_json(row["metadata_json"], {}),
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
@@ -706,74 +686,34 @@ class SqliteStore:
             for row in rows
         ]
 
-    def set_foreground_control(self, payload: dict) -> None:
-        now = self.now()
-        self.connection.execute(
-            """
-            INSERT INTO foreground_control (
-              slot, thread_id, client_id, session_id, reason, updated_at
-            ) VALUES ('foreground', ?, ?, ?, ?, ?)
-            ON CONFLICT(slot) DO UPDATE SET
-              thread_id = excluded.thread_id,
-              client_id = excluded.client_id,
-              session_id = excluded.session_id,
-              reason = excluded.reason,
-              updated_at = excluded.updated_at
-            """,
-            (
-                payload["thread_id"],
-                payload["client_id"],
-                payload["session_id"],
-                payload["reason"],
-                now,
-            ),
-        )
-        self.connection.commit()
-
-    def get_foreground_control(self) -> dict | None:
-        row = self.connection.execute(
-            "SELECT * FROM foreground_control WHERE slot = 'foreground'"
-        ).fetchone()
-        if not row:
-            return None
-        return {
-            "thread_id": row["thread_id"],
-            "client_id": row["client_id"],
-            "session_id": row["session_id"],
-            "reason": row["reason"],
-            "updated_at": row["updated_at"],
-        }
-
     def record_switch(self, payload: dict) -> dict:
         record = {
             "id": create_id("switch"),
+            "session_id": payload["session_id"],
             "from_client_id": payload.get("from_client_id"),
             "to_client_id": payload["to_client_id"],
-            "from_persona_id": payload.get("from_persona_id"),
-            "to_persona_id": payload["to_persona_id"],
             "reason": payload["reason"],
+            "trigger": payload.get("trigger", "daemon"),
             "explanation": payload["explanation"],
             "handoff_summary": payload["handoff_summary"],
-            "trigger": payload.get("trigger", "daemon"),
             "created_at": payload.get("created_at", self.now()),
         }
         self.connection.execute(
             """
             INSERT INTO switch_logs (
-              id, from_client_id, to_client_id, from_persona_id, to_persona_id,
-              reason, explanation, handoff_summary, trigger, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              id, session_id, from_client_id, to_client_id, reason,
+              trigger, explanation, handoff_summary, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record["id"],
+                record["session_id"],
                 record["from_client_id"],
                 record["to_client_id"],
-                record["from_persona_id"],
-                record["to_persona_id"],
                 record["reason"],
+                record["trigger"],
                 record["explanation"],
                 record["handoff_summary"],
-                record["trigger"],
                 record["created_at"],
             ),
         )
@@ -781,33 +721,131 @@ class SqliteStore:
         self._append_jsonl("switch-log.jsonl", record)
         return record
 
-    def list_switch_logs(self, limit: int = 10) -> list[dict]:
+    def list_switch_logs(self, session_id: str, limit: int = 10) -> list[dict]:
         rows = self.connection.execute(
-            "SELECT * FROM switch_logs ORDER BY created_at DESC LIMIT ?", (limit,)
+            """
+            SELECT * FROM switch_logs
+            WHERE session_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (session_id, limit),
         ).fetchall()
         return [
             {
                 "id": row["id"],
+                "session_id": row["session_id"],
                 "from_client_id": row["from_client_id"],
                 "to_client_id": row["to_client_id"],
-                "from_persona_id": row["from_persona_id"],
-                "to_persona_id": row["to_persona_id"],
                 "reason": row["reason"],
+                "trigger": row["trigger"],
                 "explanation": row["explanation"],
                 "handoff_summary": row["handoff_summary"],
-                "trigger": row["trigger"],
                 "created_at": row["created_at"],
             }
             for row in rows
         ]
 
-    def get_reality_projection(self, thread_id: str) -> dict:
-        thread = self.get_latest_reality_thread()
-        if not thread or thread["id"] != thread_id:
-            raise ValueError(f"Reality thread '{thread_id}' not found")
+    def save_projection_cache(self, payload: dict) -> dict:
+        now = self.now()
+        self.connection.execute(
+            """
+            INSERT INTO projection_cache (
+              cache_key, projection_type, session_id, client_id, value_json,
+              metadata_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(cache_key) DO UPDATE SET
+              projection_type = excluded.projection_type,
+              session_id = excluded.session_id,
+              client_id = excluded.client_id,
+              value_json = excluded.value_json,
+              metadata_json = excluded.metadata_json,
+              updated_at = excluded.updated_at
+            """,
+            (
+                payload["cache_key"],
+                payload["projection_type"],
+                payload["session_id"],
+                payload["client_id"],
+                _dump_json(payload["value"]),
+                _dump_json(payload.get("metadata", {})),
+                now,
+                now,
+            ),
+        )
+        self.connection.commit()
+        return self.get_projection_cache(payload["cache_key"])
+
+    def get_projection_cache(self, cache_key: str) -> dict | None:
+        row = self.connection.execute(
+            "SELECT * FROM projection_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+        if not row:
+            return None
         return {
-            "thread": thread,
-            "consequences": self.list_consequences(thread_id, "active"),
-            "recent_events": self.list_recent_reality_events(thread_id, 8),
-            "reality_notes": self.list_memories({"layer": "reality-note", "limit": 5}),
+            "cache_key": row["cache_key"],
+            "projection_type": row["projection_type"],
+            "session_id": row["session_id"],
+            "client_id": row["client_id"],
+            "value": _parse_json(row["value_json"], {}),
+            "metadata": _parse_json(row["metadata_json"], {}),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
         }
+
+    def create_prewarm_job(self, payload: dict) -> dict:
+        now = self.now()
+        record = {
+            "id": create_id("prewarm"),
+            "session_id": payload["session_id"],
+            "client_id": payload["client_id"],
+            "status": payload.get("status", "ready"),
+            "reason": payload["reason"],
+            "payload": payload.get("payload", {}),
+            "created_at": now,
+            "updated_at": now,
+        }
+        self.connection.execute(
+            """
+            INSERT INTO prewarm_jobs (
+              id, session_id, client_id, status, reason, payload_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record["id"],
+                record["session_id"],
+                record["client_id"],
+                record["status"],
+                record["reason"],
+                _dump_json(record["payload"]),
+                record["created_at"],
+                record["updated_at"],
+            ),
+        )
+        self.connection.commit()
+        return record
+
+    def list_prewarm_jobs(self, session_id: str, limit: int = 10) -> list[dict]:
+        rows = self.connection.execute(
+            """
+            SELECT * FROM prewarm_jobs
+            WHERE session_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (session_id, limit),
+        ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "session_id": row["session_id"],
+                "client_id": row["client_id"],
+                "status": row["status"],
+                "reason": row["reason"],
+                "payload": _parse_json(row["payload_json"], {}),
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ]

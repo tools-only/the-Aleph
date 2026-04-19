@@ -17,16 +17,17 @@ def _filter_memory(entries: list[dict], query: str | None) -> list[dict]:
 
 
 class MemoryView:
-    def __init__(self, client: dict, private_entries: list[dict], shared_entries: list[dict]) -> None:
+    def __init__(self, client: dict, private_entries: list[dict], shared_entries: list[dict], handoff_entries: list[dict]) -> None:
         self._client = client
         self.recent_private = private_entries
         self.recent_shared = shared_entries
+        self.recent_handoff = handoff_entries
 
     def get_private(self, query: str | None = None) -> list[dict]:
         return _filter_memory(self.recent_private, query)
 
     def get_shared(self, domain: str, query: str | None = None) -> list[dict]:
-        readable = self._client["capabilities"]["readable_shared_domains"]
+        readable = self._client["shared_memory_policy"]["read_domains"]
         if domain not in readable:
             raise PermissionError(
                 f"Client '{self._client['id']}' cannot read shared domain '{domain}'"
@@ -34,46 +35,58 @@ class MemoryView:
         scoped = [entry for entry in self.recent_shared if entry["domain"] == domain]
         return _filter_memory(scoped, query)
 
+    def get_handoff(self, query: str | None = None) -> list[dict]:
+        return _filter_memory(self.recent_handoff, query)
+
 
 @dataclass
 class ClientSelf:
     client_id: str
-    persona_id: str
     display_name: str
-    voice: str
-    specialties: list[str]
+    role: str
     boundaries: list[str]
-    permissions: list[str]
-    shared_domains: list[str]
 
 
 @dataclass
-class ClientSessionState:
+class SessionState:
     session_id: str
-    latest_handoff: dict | None
+    title: str
+    foreground_client_id: str
 
 
 @dataclass
-class ClientTurnState:
+class TurnState:
     user_input: str
     source_event_id: str
 
 
 @dataclass
-class ClientHistory:
+class HistoryState:
     recent_turns: list[dict]
+    recent_stream: list[dict]
+
+
+@dataclass
+class ProjectionState:
+    prompt_projection: dict
+    memory_projection: dict
+    tool_projection: dict
+    capability_projection: dict
+    cache_status: dict
 
 
 @dataclass
 class ClientContext:
     self: ClientSelf
-    session: ClientSessionState
-    turn: ClientTurnState
-    reality: dict
-    history: ClientHistory
+    session: SessionState
+    turn: TurnState
+    history: HistoryState
     memory: MemoryView
+    projections: ProjectionState
+    runtime_signals: dict
+    agent_native_state: dict
+    adapter_handler: object
     actions: ClientTurnBuilder
-    capabilities: dict
 
 
 class ClientContextBuilder:
@@ -85,55 +98,54 @@ class ClientContextBuilder:
         self,
         *,
         client: dict,
-        thread_id: str,
-        session_id: str,
-        user_input: str,
+        session: dict,
         source_event_id: str,
-        latest_handoff: dict | None,
+        user_input: str,
+        projection: dict,
+        adapter_handler,
     ) -> ClientContext:
-        turn_builder = ClientTurnBuilder(client)
-        reality = self.store.get_reality_projection(thread_id)
-        isolation = client["isolation"]
-        private_entries = self.store.list_memories(
-            {
-                "layer": "private",
-                "persona_id": client["id"],
-                "limit": isolation["private_memory_window"],
-            }
-        )
-        shared_entries = self.store.list_memories(
-            {
-                "layer": "shared",
-                "domains": client["capabilities"]["readable_shared_domains"],
-                "limit": isolation["shared_memory_window"],
-            }
-        )
+        runtime_preferences = client["runtime_preferences"]
         recent_turns = self.session_manager.list_recent_turns(
-            client["id"], isolation["transcript_window"]
+            session["id"],
+            client_id=client["id"],
+            limit=runtime_preferences["transcript_window"],
         )
-
-        trimmed_reality = {
-            **reality,
-            "consequences": reality["consequences"][: isolation["consequence_window"]],
-        }
-
+        recent_stream = self.store.list_session_events(
+            session["id"],
+            channel="presentation",
+            limit=10,
+        )
+        memory_projection = projection["memory"]
         return ClientContext(
             self=ClientSelf(
                 client_id=client["id"],
-                persona_id=client["persona_id"],
                 display_name=client["display_name"],
-                voice=client["voice"],
-                specialties=client["specialties"],
+                role=client["role"],
                 boundaries=client["boundaries"],
-                permissions=client["permissions"],
-                shared_domains=client["shared_domains"],
             ),
-            session=ClientSessionState(session_id=session_id, latest_handoff=latest_handoff),
-            turn=ClientTurnState(user_input=user_input, source_event_id=source_event_id),
-            reality=trimmed_reality,
-            history=ClientHistory(recent_turns=recent_turns),
-            memory=MemoryView(client, private_entries, shared_entries),
-            actions=turn_builder,
-            capabilities=client["capabilities"],
+            session=SessionState(
+                session_id=session["id"],
+                title=session["title"],
+                foreground_client_id=session["foreground_client_id"],
+            ),
+            turn=TurnState(user_input=user_input, source_event_id=source_event_id),
+            history=HistoryState(recent_turns=recent_turns, recent_stream=recent_stream),
+            memory=MemoryView(
+                client,
+                memory_projection["private"],
+                memory_projection["shared"],
+                memory_projection["handoff"],
+            ),
+            projections=ProjectionState(
+                prompt_projection=projection["prompt"],
+                memory_projection=projection["memory"],
+                tool_projection=projection["tools"],
+                capability_projection=projection["capability"],
+                cache_status=projection["cache"],
+            ),
+            runtime_signals=client["instance"]["runtime_signals"],
+            agent_native_state=client["instance"]["agent_native_state"],
+            adapter_handler=adapter_handler,
+            actions=ClientTurnBuilder(client),
         )
 

@@ -14,36 +14,28 @@ def create_engine(root_dir: str | Path) -> AlephEngine:
     engine = AlephEngine(root_dir=root, store=store)
     for client in build_default_clients():
         engine.register_client(client)
-    engine.bootstrap(
-        initial_client_id="iris",
-        title="Aleph Demo Thread",
-        summary="A single reality is active. Clients may change, but consequences remain.",
-        active_scene="The user has entered a fragile situation that may require a handoff.",
-    )
+    engine.bootstrap(initial_client_id="iris", title="Aleph Demo Session")
     return engine
 
 
 def format_state(state: dict) -> str:
-    foreground = state["foreground"]
-    current_client = next(
-        (client for client in state["clients"] if foreground and client["id"] == foreground["client_id"]),
-        None,
-    )
+    session = state["session"]
+    if not session:
+        return "No active session."
+    current = next(client for client in state["clients"] if client["id"] == session["foreground_client_id"])
     latest_switch = state["switches"][0] if state["switches"] else None
-    consequences = " | ".join(item["summary"] for item in state["reality"]["consequences"]) if state["reality"] else "none"
-    open_loops = " | ".join(state["reality"]["thread"]["open_loops"]) if state["reality"] else "none"
+    cache_status = state["presentation_stream"][0]["payload"].get("cache") if state["presentation_stream"] and state["presentation_stream"][0]["event_kind"] == "final" else None
     return "\n".join(
         [
-            f"Foreground: {current_client['display_name'] if current_client else 'none'} ({foreground['client_id'] if foreground else 'n/a'})",
-            f"Scene: {state['reality']['thread']['active_scene'] if state['reality'] else 'n/a'}",
-            f"Summary: {state['reality']['thread']['summary'] if state['reality'] else 'n/a'}",
-            f"Open loops: {open_loops or 'none'}",
-            f"Consequences: {consequences or 'none'}",
+            f"Session: {session['title']} ({session['id']})",
+            f"Foreground client: {current['display_name']} ({current['id']})",
+            f"Memory epoch: {session['memory_epoch']} | Tool epoch: {session['tool_epoch']} | Policy epoch: {session['policy_epoch']}",
             (
-                f"Latest switch: {latest_switch['from_client_id'] or 'none'} -> "
-                f"{latest_switch['to_client_id']} ({latest_switch['reason']})"
+                f"Latest switch: {latest_switch['from_client_id'] or 'none'} -> {latest_switch['to_client_id']} | {latest_switch['reason']}"
                 if latest_switch
                 else "Latest switch: none"
             ),
+            f"Prewarm jobs: {len(state['prewarm_jobs'])}",
+            f"Latest cache status: {cache_status or 'none'}",
         ]
     )

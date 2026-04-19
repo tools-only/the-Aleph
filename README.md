@@ -1,152 +1,164 @@
 # Aleph
 
-Aleph is a Python-first, chat-first MVP for a multi-persona product where several persona sessions
-share one continuous reality without sharing the same inner world.
+Aleph is an agent-infra orchestration framework for `multi-agent clients`.
+Its job is not to replace a concrete agent runtime. Its job is to sit outside
+those runtimes and make them easier to isolate, faster to respond, safer to
+handoff, and simpler to configure at runtime.
 
-## Product view
+In Aleph v1, `one client = one real AI agent`.
 
-Aleph is not a generic multi-agent collaboration board. It is a product about
-multiple personas inhabiting one continuous reality.
+- A client is not a prompt fragment or a subagent slot.
+- Each client owns private memory, runtime signals, and agent-native state.
+- Shared memory is narrow, policy-governed, and explicitly written.
+- Handoff is a first-class runtime mechanism.
+- Aleph automatically compiles prompt, memory, tools, capability view, and
+  handoff packet for the active client.
 
-- Reality keeps moving forward even when the foreground persona changes
-- Each persona owns a private inner world: memory, voice, interpretation, and judgment
-- Shared memory is intentionally narrow and only preserves the minimum common ground
-- A switch is meaningful because the next persona inherits unresolved consequences
-- The product is designed to preserve tension, continuity, and interpretive difference
-
-## Design panorama
+## Architecture
 
 ```text
-                                  ALEPH
+                                 ALEPH
 
- User / external world events
-             |
-             v
- +------------------------------------+      Reality Layer:
- | Reality Layer                      |      preserves the single source of
- |------------------------------------|      continuity, tracks what is still
- | RealityThread    -> live truth     |      unresolved, and makes consequences
- | Consequences     -> inherited cost |      visible to every future handoff.
- | Open loops       -> unfinished     |
- | Recent events    -> replay window  |
- +------------------------------------+
-             |
-             v
- +------------------------------------+      Orchestration Layer:
- | Orchestration Layer                |      decides who holds foreground,
- |------------------------------------|      explains why a switch happened,
- | ForegroundControl -> one speaker   |      and packages the minimum context
- | SwitchDaemon      -> handoff logic |      the next persona must inherit.
- | Handoff summary   -> entry brief   |
- | Switch log        -> traceability  |
- +------------------------------------+
-      |                      |
-      v                      v
- +----------------+  +----------------+  +----------------+   Persona Layer:
- | Persona A      |  | Persona B      |  | Persona C      |   each persona carries a private
- |----------------|  |----------------|  |----------------|   inner world: memory, voice,
- | Private memory |  | Private memory |  | Private memory |   interpretation, and boundaries.
- | Voice          |  | Voice          |  | Voice          |   They share one reality, not one
- | Lens           |  | Lens           |  | Lens           |   subjective self.
- | Boundaries     |  | Boundaries     |  | Boundaries     |
- +----------------+  +----------------+  +----------------+
-      \                    |                    /
-       \                   |                   /
-        +-------------------------------------+  SharedMemoryDomain:
-        | SharedMemoryDomain                  |  stores the minimum common
-        | commitments / social / facts        |  ground needed for continuity
-        | low-bandwidth common ground         |  without collapsing all personas
-        +-------------------------------------+  into one blended narrator.
+  Edge Gateway                    Aleph Cloud                     Agent Runtime Pool
+  ---------------------------     -----------------------------   ------------------------
+  Text / UI events           --->  SessionOrchestrator        ---> AgentAdapter(nanobot)
+  Debounce / buffering             ProjectionCompiler         ---> AgentAdapter(mock)
+  Stream rendering                 MemoryManager
+                                   SwitchDaemon
+                                   Cache / prewarm / trace
+
+  Major functions by layer
+
+  [Edge Gateway]
+  - normalize incoming interaction events
+  - keep the request path lightweight
+  - consume stable presentation stream events
+
+  [Aleph Cloud]
+  - compile runtime projections for the active client
+  - enforce private/shared/handoff memory boundaries
+  - evaluate handoff rules and write handoff envelopes
+  - maintain projection cache and memory slice cache
+  - emit internal orchestration events and presentation stream events
+
+  [Agent Runtime Pool]
+  - run one real agent per client
+  - receive compiled prompt/memory/tool surfaces via adapters
+  - keep agent-native state behind an adapter boundary
 ```
 
-## Core model
+### Layer notes
 
-### Reality Layer
+**Edge Gateway**
 
-This is the product's source of continuity. It stores what is still true in the
-world, what remains unresolved, and which consequences are still alive.
+The edge side stays intentionally light. It gathers text or UI events, applies
+small buffering/debounce behavior, and renders streaming output. It does not
+own the heavy orchestration logic.
 
-- `RealityThread` is the single continuous reality, not a chat transcript
-- `Consequence` is an abstract inheritable effect, not a hardcoded pain model
-- `open loops` track commitments, risks, relationship residue, and unfinished threads
+**Aleph Cloud**
 
-### Persona Layer
+This is the control plane. It contains:
 
-Each persona is a distinct session container rather than a simple routing target.
+- `ClientRegistry`
+- `ProjectionCompiler`
+- `MemoryManager`
+- `SessionOrchestrator`
+- `SwitchDaemon`
 
-- `PersonaProfile` defines style, specialties, boundaries, and shared-memory access
-- `private memory` stores how that persona interprets the world
-- personas do not automatically gain access to each other's inner narrative
+This layer takes design-time `ClientBlueprint`s and turns them into runtime
+`ClientProjection`s.
 
-### Orchestration Layer
+**Agent Runtime Pool**
 
-This layer makes switching legible and safe.
+Every client maps to one real agent. Different runtimes can be attached through
+adapters. In the current prototype:
 
-- `ForegroundControl` guarantees one foreground persona at a time
-- `SwitchDaemon` handles manual and semi-automatic handoff
-- every switch produces an explanation and a handoff summary
-- the next persona inherits the reality state rather than starting fresh
+- `NanobotAdapter` wraps local nanobot-style handlers
+- `MockAgentAdapter` proves that a second runtime can be added without changing
+  the orchestrator
 
-## What exists
+## Core objects
 
-- A continuous `RealityThread` with active consequences and open loops
-- Persona sessions with private memory and limited shared memory
-- A `SwitchDaemon` that handles manual and semi-automatic handoff
-- A runnable Python CLI prototype and scripted scenario
-- Python unit tests for continuity, privacy, shared memory, and switch explanation
-- Demo/test entry points use in-memory SQLite by default for portability in restricted runtimes
+- `ClientBlueprint`
+  Design-time client definition: role, boundaries, declared capability,
+  shared-memory policy, tools, handoff rules, runtime preferences.
+- `ClientInstance`
+  Runtime agent endpoint for a blueprint, with runtime signals and
+  agent-native state.
+- `ProjectionCompiler`
+  Builds prompt, memory, tool, capability, and handoff projections.
+- `HandoffEnvelope`
+  Minimal packet passed to the next client during foreground transfer.
+- `Presentation Stream Event`
+  Stable public stream protocol with `status`, `delta`, `tool_event`,
+  `handoff`, and `final`.
+
+## Memory model
+
+Aleph keeps memory boundaries at the framework layer:
+
+- `private`
+  Owned by one client only.
+- `shared`
+  Shared across clients, but only through explicit domain policy.
+- `handoff`
+  Used for client transfer and replay.
+- `runtime`
+  Logs, traces, and operational notes.
+- `agent-native state`
+  Maintained behind the adapter boundary. Aleph syncs it intentionally rather
+  than treating it as the only source of truth.
+
+## Runtime acceleration
+
+Aleph is allowed to be internally complex as long as that complexity makes
+client runtimes faster and cleaner.
+
+Current v1 prototype includes:
+
+- projection cache
+- memory slice cache
+- prompt skeleton reuse
+- candidate client prewarm
+- asynchronous memory-maintenance scheduling
+- internal/presentation stream split
+
+The key rule is that prewarm and preprocessing must stay:
+
+- side-effect free
+- cancelable
+- budget-bounded per session
+
+## What exists today
+
+- Python-first v1 prototype
+- SQLite-backed session state, memory, switch logs, caches, and prewarm jobs
+- `SessionOrchestrator` for single-session, single-foreground operation
+- policy-governed private/shared/handoff memory handling
+- rule-based, explainable handoff
+- streaming protocol with `status`, `delta`, `tool_event`, `handoff`, `final`
+- `NanobotAdapter` plus a second `MockAgentAdapter`
+- unit tests covering isolation, handoff, streaming, cache, and adapter
+  extensibility
 
 ## Quick start
 
 ```bash
-python scripts/scenario.py
-python scripts/repl.py
-python scripts/run_tests.py
+C:\Program Files\AutoClaw\resources\python\python.exe scripts\scenario.py
+C:\Program Files\AutoClaw\resources\python\python.exe scripts\repl.py
+C:\Program Files\AutoClaw\resources\python\python.exe scripts\run_tests.py
 ```
 
-If your shell does not expose `python`, the verified interpreter on this machine is:
+## Project docs
 
-`C:\Program Files\AutoClaw\resources\python\python.exe`
-
-## CLI commands
-
-- `/personas` list available personas
-- `/switch <persona-id>` manually switch foreground persona
-- `/state` inspect current reality, consequences, and recent switch log
-- `/quit` exit the REPL
-
-## Plan doc
-
-The product design plan lives at:
-
-`docs/plans/2026-04-18-aleph-mvp.md`
-
-Client isolation and nanobot-aligned runtime design live at:
-
-`docs/plans/2026-04-18-aleph-client-design.md`
+- [Aleph v1 plan](docs/plans/2026-04-18-aleph-mvp.md)
+- [Client runtime design notes](docs/plans/2026-04-18-aleph-client-design.md)
 
 ## Roadmap
 
-### Current MVP
-
-- chat-first prototype
-- SQLite-backed truth store plus JSONL debug logs
-- single foreground persona model
-- semi-automatic switching with explanations
-- private memory, shared memory, and reality state separation
-- Python package layout aligned to nanobot-style runtime layering
-
-### Next updates
-
-- add a small web UI with panes for current persona, live consequences, and recent switches
-- move personas into editable config files so tone, specialties, and shared domains are easy to tune
-- improve consequence lifecycle so items can escalate, cool down, merge, or be resolved more naturally
-- add richer handoff summaries that preserve continuity without flattening persona differences
-- add scenario packs for different use cases without hardcoding domain-specific state into the core model
-
-### Later product evolution
-
-- support background observer personas without allowing multi-foreground contention
-- add richer narrative and relational state visualizations
-- explore stronger memory retrieval and long-horizon continuity
-- integrate external systems only after the chat-first product loop feels strong on its own
+- `ExternalStateAdapter` for future device/environment integration
+- multimodal edge events
+- richer routing and scheduling policies
+- more agent runtime adapters
+- deeper agent-native state synchronization
+- a trimmed edge-side Aleph runtime when the cloud control plane is stable

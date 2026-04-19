@@ -5,49 +5,29 @@ class ClientSessionManager:
     def __init__(self, store) -> None:
         self.store = store
 
-    def start_foreground_session(
-        self,
-        *,
-        thread_id: str,
-        client_id: str,
-        reason: str,
-        handoff_summary: str = "",
-    ) -> dict:
-        session = self.store.create_client_session(
+    def ensure_session(self, *, initial_client_id: str, title: str = "Aleph Session") -> dict:
+        existing = self.store.get_latest_session()
+        if existing:
+            return existing
+        return self.store.create_session(
             {
-                "client_id": client_id,
-                "status": "foreground",
-                "handoff_summary": handoff_summary,
+                "title": title,
+                "foreground_client_id": initial_client_id,
+                "foreground_reason": "bootstrap",
             }
         )
-        self.store.set_foreground_control(
-            {
-                "thread_id": thread_id,
-                "client_id": client_id,
-                "session_id": session["id"],
-                "reason": reason,
-            }
-        )
-        return session
 
-    def get_foreground(self) -> dict | None:
-        control = self.store.get_foreground_control()
-        if not control:
-            return None
-        return control
+    def get_active(self) -> dict | None:
+        return self.store.get_latest_session()
 
-    def record_user_turn(
-        self,
-        *,
-        client_id: str,
-        session_id: str,
-        source_event_id: str,
-        content: str,
-    ) -> dict:
-        return self.store.append_client_turn(
+    def set_foreground(self, *, session_id: str, client_id: str, reason: str) -> dict:
+        return self.store.set_foreground_client(session_id, client_id, reason)
+
+    def record_user_turn(self, *, session_id: str, client_id: str, source_event_id: str, content: str) -> dict:
+        return self.store.append_session_turn(
             {
-                "client_id": client_id,
                 "session_id": session_id,
+                "client_id": client_id,
                 "role": "user",
                 "content": content,
                 "source_event_id": source_event_id,
@@ -58,16 +38,16 @@ class ClientSessionManager:
     def record_assistant_turn(
         self,
         *,
-        client_id: str,
         session_id: str,
+        client_id: str,
         source_event_id: str,
         content: str,
         metadata: dict | None = None,
     ) -> dict:
-        return self.store.append_client_turn(
+        return self.store.append_session_turn(
             {
-                "client_id": client_id,
                 "session_id": session_id,
+                "client_id": client_id,
                 "role": "assistant",
                 "content": content,
                 "source_event_id": source_event_id,
@@ -76,6 +56,5 @@ class ClientSessionManager:
             }
         )
 
-    def list_recent_turns(self, client_id: str, limit: int = 8) -> list[dict]:
-        return self.store.list_client_turns(client_id, limit)
-
+    def list_recent_turns(self, session_id: str, *, client_id: str | None = None, limit: int = 8) -> list[dict]:
+        return self.store.list_session_turns(session_id, client_id=client_id, limit=limit)

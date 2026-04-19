@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "aleph"
 version = "0.1.0"
-description = "Aleph MVP: a multi-persona runtime with continuous reality and client-level isolation."
+description = "Aleph v1: an agent-infra orchestration framework for isolated multi-agent clients."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
@@ -17,4 +17,3 @@ package-dir = {"" = "."}
 
 [tool.setuptools.packages.find]
 include = ["aleph*"]
-

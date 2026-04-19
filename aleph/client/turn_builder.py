@@ -8,15 +8,14 @@ class ClientTurnBuilder:
         self.client = client
         self.output = {
             "reply": "",
-            "private_memories": [],
-            "shared_memories": [],
-            "reality_updates": {
-                "reality_notes": [],
-                "consequences": [],
-                "open_loops_to_add": [],
-                "open_loops_to_resolve": [],
-            },
+            "private_memory_writes": [],
+            "shared_memory_writes": [],
+            "handoff_memory_writes": [],
+            "runtime_notes": [],
+            "tool_events": [],
             "switch_request": None,
+            "agent_native_state_patch": {},
+            "runtime_signals_patch": {},
             "audit_notes": [],
         }
 
@@ -28,13 +27,8 @@ class ClientTurnBuilder:
         self.output["reply"] += text
         return self
 
-    def write_private(
-        self,
-        content: str,
-        kind: str = "note",
-        metadata: dict | None = None,
-    ) -> "ClientTurnBuilder":
-        self.output["private_memories"].append(
+    def write_private(self, content: str, kind: str = "note", metadata: dict | None = None) -> "ClientTurnBuilder":
+        self.output["private_memory_writes"].append(
             {"content": content, "kind": kind, "metadata": metadata or {}}
         )
         return self
@@ -44,44 +38,67 @@ class ClientTurnBuilder:
         domain: str,
         content: str,
         kind: str = "note",
+        write_mode: str = "append",
         metadata: dict | None = None,
     ) -> "ClientTurnBuilder":
-        self.output["shared_memories"].append(
+        self.output["shared_memory_writes"].append(
             {
                 "domain": domain,
                 "content": content,
+                "kind": kind,
+                "write_mode": write_mode,
+                "metadata": metadata or {},
+            }
+        )
+        return self
+
+    def write_handoff(
+        self,
+        content: str,
+        *,
+        target_client_id: str | None = None,
+        kind: str = "handoff_note",
+        metadata: dict | None = None,
+    ) -> "ClientTurnBuilder":
+        self.output["handoff_memory_writes"].append(
+            {
+                "content": content,
+                "target_client_id": target_client_id,
                 "kind": kind,
                 "metadata": metadata or {},
             }
         )
         return self
 
-    def note_reality(
-        self,
-        content: str,
-        kind: str = "note",
-        metadata: dict | None = None,
-    ) -> "ClientTurnBuilder":
-        self.output["reality_updates"]["reality_notes"].append(
+    def runtime_note(self, content: str, kind: str = "note", metadata: dict | None = None) -> "ClientTurnBuilder":
+        self.output["runtime_notes"].append(
             {"content": content, "kind": kind, "metadata": metadata or {}}
         )
         return self
 
-    def add_open_loop(self, loop: str) -> "ClientTurnBuilder":
-        self.output["reality_updates"]["open_loops_to_add"].append(loop)
+    def emit_tool_event(
+        self,
+        tool_id: str,
+        status: str,
+        summary: str,
+        metadata: dict | None = None,
+    ) -> "ClientTurnBuilder":
+        self.output["tool_events"].append(
+            {
+                "tool_id": tool_id,
+                "status": status,
+                "summary": summary,
+                "metadata": metadata or {},
+            }
+        )
         return self
 
-    def resolve_open_loop(self, loop: str) -> "ClientTurnBuilder":
-        self.output["reality_updates"]["open_loops_to_resolve"].append(loop)
+    def patch_agent_native_state(self, **patch: object) -> "ClientTurnBuilder":
+        self.output["agent_native_state_patch"].update(patch)
         return self
 
-    def upsert_consequence(self, **payload: object) -> "ClientTurnBuilder":
-        self.output["reality_updates"]["consequences"].append({"op": "upsert", **payload})
-        return self
-
-    def resolve_consequence(self, kind_or_payload: str | dict) -> "ClientTurnBuilder":
-        payload = {"kind": kind_or_payload} if isinstance(kind_or_payload, str) else dict(kind_or_payload)
-        self.output["reality_updates"]["consequences"].append({"op": "resolve", **payload})
+    def patch_runtime_signals(self, **patch: object) -> "ClientTurnBuilder":
+        self.output["runtime_signals_patch"].update(patch)
         return self
 
     def request_switch(
@@ -89,13 +106,12 @@ class ClientTurnBuilder:
         *,
         reason: str,
         target_client_id: str | None = None,
-        target_persona_id: str | None = None,
         urgency: str = "normal",
         replay_turn: bool = True,
     ) -> "ClientTurnBuilder":
         self.output["switch_request"] = {
-            "target_client_id": target_client_id or target_persona_id,
             "reason": reason,
+            "target_client_id": target_client_id,
             "urgency": urgency,
             "replay_turn": replay_turn,
         }
