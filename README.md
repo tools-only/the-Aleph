@@ -186,6 +186,8 @@ Current service entrypoints are designed around:
 - [Day 1 core architecture](docs/plans/2026-04-20-aleph-core-architecture.md)
 - [Day 1 public schema draft](docs/plans/2026-04-20-aleph-public-schema-draft.md)
 - [Day 1 demo boundary note](docs/plans/2026-04-20-aleph-demo-boundary-note.md)
+- [Nanobot integration guide](docs/plans/2026-04-20-aleph-nanobot-adaptation-guide.md)
+- [Stage 2 Audio Integration](docs/plans/2026-04-21-brookesia-aleph-integration.md) — Device audio streaming and esp-brookesia integration pattern
 
 ## Roadmap
 
