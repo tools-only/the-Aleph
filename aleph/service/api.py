@@ -12,14 +12,17 @@ from aleph.personas.default_clients import build_default_clients
 from aleph.service.logging import configure_logging
 
 try:  # pragma: no cover - optional runtime dependency
-    from fastapi import FastAPI, HTTPException, Request
+    from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
     from fastapi.responses import JSONResponse, StreamingResponse
 except ImportError:  # pragma: no cover - optional runtime dependency
     FastAPI = None
     HTTPException = Exception
     Request = object
+    BackgroundTasks = object
     JSONResponse = None
     StreamingResponse = None
+    WebSocket = object
+    WebSocketDisconnect = Exception
 
 
 def _build_engine(root_dir: str | Path, client_config_path: str | Path | None = None) -> AlephEngine:
@@ -44,6 +47,10 @@ def create_app(*, root_dir: str | Path = ".", client_config_path: str | Path | N
     app = FastAPI(title="Aleph API", version="0.1.0")
     app.state.engine = _build_engine(root_dir=root_dir, client_config_path=client_config_path)
     app.state.logger = logger
+
+    @app.on_event("startup")
+    async def _bind_event_bus():
+        app.state.engine.event_bus.bind_loop(asyncio.get_running_loop())
 
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
@@ -97,54 +104,119 @@ def create_app(*, root_dir: str | Path = ".", client_config_path: str | Path | N
             raise HTTPException(status_code=404, detail="session_not_found")
         return state
 
-    @app.post("/sessions/{session_id}/turns")
-    async def submit_turn(session_id: str, payload: dict[str, Any]):
-        state = app.state.engine.get_session_state(session_id)
-        if not state["session"]:
-            raise HTTPException(status_code=404, detail="session_not_found")
-        result = app.state.engine.process_user_turn(
-            payload["input_text"],
-            requested_client_id=payload.get("requested_client_id"),
+    def _run_turn(engine, session_id: str, input_text: str, requested_client_id: str | None):
+        """Synchronous turn runner executed inside a background task thread."""
+        engine.process_user_turn(
+            input_text,
+            requested_client_id=requested_client_id,
             session_id=session_id,
         )
-        latest_stream = app.state.engine.store.list_session_events_after(
+
+    @app.post("/sessions/{session_id}/turns", status_code=202)
+    async def submit_turn(session_id: str, payload: dict[str, Any], background_tasks: BackgroundTasks):
+        state = app.state.engine.get_session_state(session_id)
+        if not state["session"]:
+            raise HTTPException(status_code=404, detail="session_not_found")
+        background_tasks.add_task(
+            _run_turn,
+            app.state.engine,
             session_id,
-            channel="presentation",
-            after_created_at=None,
-            limit=10,
+            payload["input_text"],
+            payload.get("requested_client_id"),
         )
-        cursor = latest_stream[-1]["created_at"] if latest_stream else None
-        return {
-            "session_id": session_id,
-            "accepted": True,
-            "active_client_id": result["active_client_id"],
-            "reply": result["reply"],
-            "latency_ms": result["latency_ms"],
-            "stream_cursor": cursor,
-            "switch_decision": result["switch_decision"],
-        }
+        return {"session_id": session_id, "status": "processing"}
+
+    @app.get("/sessions/{session_id}/context")
+    async def get_session_context(session_id: str):
+        state = app.state.engine.get_session_state(session_id)
+        if not state["session"]:
+            raise HTTPException(status_code=404, detail="session_not_found")
+        return {"context": app.state.engine.get_context_snapshot(session_id)}
+
+    def _apply_callback(engine, session_id: str, payload: dict):
+        """Synchronous callback runner executed inside a background task thread."""
+        engine.apply_agent_callback(session_id, payload)
+
+    @app.post("/sessions/{session_id}/callback", status_code=202)
+    async def agent_callback(session_id: str, payload: dict[str, Any], background_tasks: BackgroundTasks):
+        state = app.state.engine.get_session_state(session_id)
+        if not state["session"]:
+            raise HTTPException(status_code=404, detail="session_not_found")
+        background_tasks.add_task(_apply_callback, app.state.engine, session_id, payload)
+        return {"session_id": session_id, "status": "accepted"}
 
     @app.get("/sessions/{session_id}/stream")
-    async def stream_session(session_id: str, after: str | None = None, poll_interval_ms: int = 500):
+    async def stream_session(session_id: str, request: Request):
         state = app.state.engine.get_session_state(session_id)
         if not state["session"]:
             raise HTTPException(status_code=404, detail="session_not_found")
 
+        queue = app.state.engine.event_bus.subscribe(session_id)
+
         async def event_generator():
-            cursor = after
-            while True:
-                events = app.state.engine.store.list_session_events_after(
-                    session_id,
-                    channel="presentation",
-                    after_created_at=cursor,
-                    limit=50,
-                )
-                for event in events:
-                    cursor = event["created_at"]
-                    yield f"event: {event['event_kind']}\n"
-                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                await asyncio.sleep(max(poll_interval_ms, 100) / 1000)
+            try:
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                        yield f"event: {event['event_kind']}\n"
+                        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    except asyncio.TimeoutError:
+                        yield ": keepalive\n\n"
+            finally:
+                app.state.engine.event_bus.close(session_id)
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+    @app.websocket("/sessions/{session_id}/audio")
+    async def websocket_audio(websocket: WebSocket, session_id: str):
+        """
+        WebSocket endpoint for Stage 2 bidirectional device audio streaming.
+
+        Protocol:
+          Device → Cloud:
+            Binary frame: [session_id:4][client_id:4][timestamp:8][opus_frame:N]
+          Cloud → Device:
+            Binary frame: [audio_type:1][opus_frame:N]  (for TTS playback)
+
+        TODO: Full implementation requires ASR/TTS services to be injected.
+        For MVP, this skeleton demonstrates the wire protocol pattern.
+        """
+        state = app.state.engine.get_session_state(session_id)
+        if not state["session"]:
+            await websocket.close(code=4000, reason="session_not_found")
+            return
+
+        await websocket.accept()
+        logger.info("websocket_audio_connected session=%s", session_id)
+
+        try:
+            while True:
+                data = await websocket.receive_bytes()
+                if len(data) < 16:
+                    # Malformed frame: need at least header (4+4+8 bytes)
+                    continue
+
+                # Parse frame header
+                # [session_id:4][client_id:4][timestamp:8]
+                # import struct
+                # session, client, ts = struct.unpack(">HHQ", data[:16])
+                # opus_frame = data[16:]
+
+                # TODO: Feed to AlephAudioAdapter.process_audio_stream()
+                # TODO: Receive TTS OPUS frame
+                # TODO: Send back via websocket.send_bytes()
+
+                # For MVP: echo back a simple response
+                logger.debug("websocket_audio_received session=%s bytes=%d", session_id, len(data))
+                # Placeholder: send silence back
+                await websocket.send_bytes(b"\x00" * 100)
+
+        except WebSocketDisconnect:
+            logger.info("websocket_audio_disconnected session=%s", session_id)
+        except Exception as e:
+            logger.exception("websocket_audio_error session=%s error=%s", session_id, str(e))
+            await websocket.close(code=1000)
 
     return app
