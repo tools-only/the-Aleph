@@ -6,28 +6,28 @@ All notable changes to Aleph are documented in this file.
 
 ### Summary
 
-This version adds Stage 2 audio integration foundations for embedded devices (e.g., esp-brookesia). New `AlephAudioAdapter` provides ASR (speech-to-text) and TTS (text-to-speech) abstraction, enabling device clients to stream audio via WebSocket instead of text. The adapter bridges device audio frames ↔ Aleph session orchestration, with pluggable ASR/TTS service interfaces for cloud-based or local deployment. WebSocket endpoint follows the Stage 2 bidirectional audio protocol.
+This version adds Stage 2 audio integration foundations for embedded devices (e.g., esp-brookesia). New `AlephAudioAdapter` bridges device audio frames to Aleph session orchestration through pluggable ASR (speech-to-text) and TTS (text-to-speech) service interfaces. A WebSocket endpoint (`/sessions/{id}/audio`) wires the adapter into the service layer so devices can stream audio in real time, receive agent replies as synthesized speech, and participate in Aleph's existing multi-client handoff / memory semantics.
 
 ### Added
 
-- Added `aleph/adapters/audio_adapter.py`: `AlephAudioAdapter` class for device audio ↔ Aleph session bridging.
-  - `ASRService` (ABC): Speech-to-text abstraction with `MockASRService` implementation.
-  - `TTSService` (ABC): Text-to-speech abstraction with `MockTTSService` implementation.
-  - `AudioFrame`, `AudioCodec`: Data models for audio frames (OPUS 16kHz, 24kbps).
-  - `process_audio_stream()`: Async generator that consumes device audio, performs ASR, routes to Aleph, yields TTS response.
-- Added WebSocket endpoint `POST /sessions/{session_id}/audio` in `aleph/service/api.py`:
-  - Binary frame protocol: device sends OPUS frames with metadata, receives TTS audio.
-  - Supports concurrent audio streaming for real-time voice interaction.
-  - Handles connection lifecycle, silence detection, and error recovery (TODOs for production).
-- Exported new adapter classes from `aleph/adapters/__init__.py`.
+- Added `aleph/adapters/audio_adapter.py`:
+  - `AlephAudioAdapter`: async frame-stream processor that applies a timeout-based VAD, invokes ASR on each utterance, dispatches the transcribed text to `engine.process_user_turn` via `asyncio.to_thread` (so the sync engine does not block the event loop), and yields TTS frames back to the caller.
+  - `ASRService` / `TTSService` abstract base classes, plus `MockASRService` / `MockTTSService` for development and tests.
+  - `AudioFrame` / `AudioCodec` data models (OPUS/PCM16, 16 kHz mono).
+- Added WebSocket endpoint `/sessions/{session_id}/audio` in `aleph/service/api.py`:
+  - Upstream: device sends one binary frame per OPUS packet. An empty binary frame (0 bytes) marks end-of-utterance and triggers ASR.
+  - Downstream: TTS frames from the configured adapter are written back as binary frames.
+  - Uses RFC 6455 close codes (1008 for unknown session, 1011 for internal error).
+- `create_app(...)` now accepts an optional `audio_adapter` argument; if omitted, a default `AlephAudioAdapter` backed by the mock ASR/TTS services is created automatically.
+- Exported `AlephAudioAdapter`, `ASRService`, `TTSService`, `MockASRService`, `MockTTSService`, `AudioFrame`, `AudioCodec` from `aleph.adapters`.
+- Added `tests/test_audio_adapter.py`: construction tests, utterance flush tests (ASR → engine → TTS), and an end-to-end stream test that exercises `process_frame_stream` with a fake source.
+- Added `docs/plans/2026-04-21-brookesia-aleph-integration.md`: esp-brookesia device-side integration guide covering the WebSocket wire format, the `tool_event` `device.*` convention for device-side actions, and TODOs that need the brookesia base-class signatures.
 
 ### Notes
 
-- **MVP Scope**: ASR/TTS services are abstracted but default to mock implementations (return fixed text/silence).
-  - TODO: Integrate real services (Google Cloud Speech, Whisper, TTS, etc.) per deployment needs.
-- **Silence Detection**: Basic buffer-size heuristic for MVP; production should use RMS-based voice activity detection.
-- **Device Integration**: Target pattern is `brookesia_agent_aleph` (separate C++ component repo) consuming Aleph via this adapter.
-  - See `docs/plans/2026-04-21-brookesia-aleph-integration.md` for esp-brookesia integration guide.
+- Default ASR/TTS are mocks. Real deployments should inject concrete `ASRService` / `TTSService` implementations (Google Cloud Speech, Whisper, etc.) via `create_app(audio_adapter=...)`.
+- VAD is timeout-based for the MVP; production should swap in RMS / WebRTC-style voice activity detection once PCM conversion is wired in.
+- OPUS packets are preserved intact per frame (no byte-level concatenation) so real ASR backends can decode them correctly.
 
 ## v0.1.4 - 2026-04-21
 

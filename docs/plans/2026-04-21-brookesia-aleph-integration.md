@@ -85,35 +85,42 @@ public:
 
 ### Wire Protocol: Stage 2 Bidirectional Audio
 
+The MVP protocol uses raw OPUS packets without a metadata header, keeping the
+implementation simple on both ends. `session_id` is already encoded in the
+URL path (`/sessions/{session_id}/audio`), so per-frame metadata is not
+required yet.
+
 **Device → Cloud** (binary WebSocket frame):
 ```
-[session_id:4 bytes]
-[client_id:4 bytes]
-[timestamp:8 bytes (ms since start)]
-[opus_frame:N bytes]
+[opus_frame:N bytes]            # one non-empty frame per OPUS packet
+[]                              # zero-length frame = end-of-utterance marker
 ```
 
 **Cloud → Device** (binary WebSocket frame):
 ```
-[audio_type:1 byte]  // 0x00 = TTS response
-[opus_frame:N bytes]
+[opus_frame:N bytes]            # one OPUS packet per frame (TTS reply)
 ```
+
+**TODO (post-MVP):** add an optional metadata header
+(`client_id`, `timestamp`, `audio_type`) in front of the OPUS body once the
+C++ client is ready to emit and consume it.
 
 **Sample Sequence:**
 ```
-Device starts, connects to cloud, creates session
-Device captures audio (PCM 16kHz 1ch)
-Device → Cloud: WebSocket binary [sess][client][ts][opus_chunk_1]
-Device → Cloud: WebSocket binary [sess][client][ts][opus_chunk_2]
-[silence detected, ASR triggered]
-Cloud → Aleph: POST /sessions/{id}/turns with transcribed text
+Device starts, connects to cloud (POST /sessions) and opens WebSocket
+Device captures audio (PCM 16 kHz 1 ch), encodes each chunk to OPUS
+Device → Cloud: WebSocket binary [opus_chunk_1]
+Device → Cloud: WebSocket binary [opus_chunk_2]
+Device stops speaking, detects local end-of-utterance (VAD or button release)
+Device → Cloud: WebSocket binary []                   # EOU marker
+Cloud AlephAudioAdapter: ASR(frames) → text → engine.process_user_turn(...)
 Cloud → Device: SSE event: status
 Cloud → Device: SSE event: delta ("Assistant is thinking...")
 Cloud → Device: SSE event: delta ("...and here's the response")
 Agent executes, generates reply
-Cloud → Aleph: TTS synthesis of reply → OPUS
-Cloud → Device: WebSocket binary [0x00][opus_tts_chunk_1]
-Cloud → Device: WebSocket binary [0x00][opus_tts_chunk_2]
+Cloud AlephAudioAdapter: TTS(reply) → list of OPUS frames
+Cloud → Device: WebSocket binary [opus_tts_chunk_1]
+Cloud → Device: WebSocket binary [opus_tts_chunk_2]
 Cloud → Device: SSE event: final
 Device → AudioService: playback TTS audio
 Device → UIService: display final reply
@@ -162,34 +169,36 @@ void AlephAgent::_on_device_event(const char* device_action) {
 The `AlephAudioAdapter` (new in v0.1.5) bridges device audio → Aleph session:
 
 ```python
-from aleph.adapters import AlephAudioAdapter, MockASRService, MockTTSService
+from aleph.adapters import AlephAudioAdapter
+from aleph.service.api import create_app
 
-# Initialize with real or mock services
-asr_service = MyGoogleASRService()  # TODO: Implement for your cloud
-tts_service = MyGoogleTTSService()  # TODO: Implement for your cloud
+# Implement real services, or use the built-in mocks for bring-up
+asr_service = MyCloudASRService()   # TODO: Implement for your cloud
+tts_service = MyCloudTTSService()   # TODO: Implement for your cloud
 
 adapter = AlephAudioAdapter(engine, asr_service, tts_service)
 
-# Consume device audio, route to Aleph, yield TTS response
-async for tts_frame in adapter.process_audio_stream(
-    session_id="sess_123",
-    device_id="device_abc",
-    audio_frames=device_audio_stream,
-):
-    # Send tts_frame back to device
-    await websocket.send_bytes(tts_frame.data)
+# Inject the adapter at app-construction time
+app = create_app(root_dir="./data", audio_adapter=adapter)
+
+# Internally, the /sessions/{id}/audio endpoint drives:
+#
+# async for tts_frame in adapter.process_frame_stream(
+#     session_id=..., device_id=..., frames=device_frame_source,
+# ):
+#     await websocket.send_bytes(tts_frame.data)
 ```
 
 **Interfaces (abstract):**
 
 ```python
 class ASRService(ABC):
-    async def transcribe(self, audio_data: bytes, codec: AudioCodec, sample_rate: int) -> str:
-        """Encode audio → return transcribed text."""
+    async def transcribe(self, frames: list[AudioFrame]) -> str:
+        """Receive one utterance's worth of frames, return transcribed text."""
 
 class TTSService(ABC):
-    async def synthesize(self, text: str) -> bytes:
-        """Encode text → return OPUS audio."""
+    async def synthesize(self, text: str) -> list[AudioFrame]:
+        """Synthesize `text` into one or more OPUS AudioFrame packets."""
 ```
 
 ## Integration Steps (MVP)
