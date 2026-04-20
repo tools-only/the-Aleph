@@ -151,9 +151,14 @@ C:\Program Files\AutoClaw\resources\python\python.exe scripts\run_tests.py
 
 ## Project docs
 
+- [Changelog](CHANGELOG.md)
 - [Aleph v1 plan](docs/plans/2026-04-18-aleph-mvp.md)
 - [Client runtime design notes](docs/plans/2026-04-18-aleph-client-design.md)
 - [Implementation summary and 7-day MVP delivery plan](docs/plans/2026-04-20-aleph-implementation-and-7day-plan.md)
+- [Day 1 framework overview](docs/plans/2026-04-20-aleph-framework-overview.md)
+- [Day 1 core architecture](docs/plans/2026-04-20-aleph-core-architecture.md)
+- [Day 1 public schema draft](docs/plans/2026-04-20-aleph-public-schema-draft.md)
+- [Day 1 demo boundary note](docs/plans/2026-04-20-aleph-demo-boundary-note.md)
 
 ## Roadmap
 

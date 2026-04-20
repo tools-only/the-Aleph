@@ -4,9 +4,13 @@ from aleph.adapters import MockAgentAdapter, NanobotAdapter
 from aleph.client.registry import ClientRegistry
 from aleph.client.session_manager import ClientSessionManager
 from aleph.core.edge_gateway import EdgeGateway
+from aleph.core.foreground_controller import ForegroundController
+from aleph.core.handoff_engine import HandoffEngine
 from aleph.core.memory_manager import MemoryManager
 from aleph.core.projection_compiler import ProjectionCompiler
+from aleph.core.runtime_signal_collector import RuntimeSignalCollector
 from aleph.core.session_orchestrator import SessionOrchestrator
+from aleph.core.stream_emitter import StreamEmitter
 from aleph.core.switch_daemon import SwitchDaemon
 from aleph.storage.sqlite_store import SqliteStore
 
@@ -19,17 +23,30 @@ class AlephEngine:
         self.client_session_manager = ClientSessionManager(self.store)
         self.memory_manager = MemoryManager(self.store)
         self.projection_compiler = ProjectionCompiler(self.store, self.memory_manager)
+        self.foreground_controller = ForegroundController(self.client_session_manager)
+        self.stream_emitter = StreamEmitter(self.store)
+        self.runtime_signal_collector = RuntimeSignalCollector(self.store)
         self._adapter_registry = {
             "nanobot": NanobotAdapter(),
             "mock": MockAgentAdapter(),
         }
+        self.handoff_engine = HandoffEngine(
+            store=self.store,
+            switch_daemon=self.switch_daemon,
+            compiler=self.projection_compiler,
+            registry=self.client_registry,
+            foreground_controller=self.foreground_controller,
+        )
         self.session_orchestrator = SessionOrchestrator(
             store=self.store,
             registry=self.client_registry,
             session_manager=self.client_session_manager,
+            foreground_controller=self.foreground_controller,
             compiler=self.projection_compiler,
             memory_manager=self.memory_manager,
-            switch_daemon=self.switch_daemon,
+            handoff_engine=self.handoff_engine,
+            stream_emitter=self.stream_emitter,
+            runtime_signal_collector=self.runtime_signal_collector,
             adapter_factory=self.get_adapter,
         )
         self.edge_gateway = EdgeGateway(self)

@@ -12,17 +12,23 @@ class SessionOrchestrator:
         store,
         registry,
         session_manager,
+        foreground_controller,
         compiler,
         memory_manager,
-        switch_daemon,
+        handoff_engine,
+        stream_emitter,
+        runtime_signal_collector,
         adapter_factory,
     ) -> None:
         self.store = store
         self.registry = registry
         self.session_manager = session_manager
+        self.foreground_controller = foreground_controller
         self.compiler = compiler
         self.memory_manager = memory_manager
-        self.switch_daemon = switch_daemon
+        self.handoff_engine = handoff_engine
+        self.stream_emitter = stream_emitter
+        self.runtime_signal_collector = runtime_signal_collector
         self.adapter_factory = adapter_factory
         self.context_builder = ClientContextBuilder(store, session_manager)
 
@@ -30,7 +36,7 @@ class SessionOrchestrator:
         return self.session_manager.ensure_session(initial_client_id=initial_client_id, title=title)
 
     def stream_turn(self, *, session: dict, user_input: str, requested_client_id: str | None = None, switch_budget: int = 1):
-        current = self.registry.get(session["foreground_client_id"])
+        current = self.registry.get(self.foreground_controller.get_foreground_client_id(session))
         if requested_client_id and requested_client_id != session["foreground_client_id"]:
             switch_decision = self._switch(
                 session=session,
@@ -42,8 +48,13 @@ class SessionOrchestrator:
             )
             if switch_decision["approved"]:
                 session = self.store.get_session(session["id"])
-                current = self.registry.get(session["foreground_client_id"])
-                yield self._presentation_event(session["id"], "handoff", switch_decision, source="daemon")
+                current = self.registry.get(self.foreground_controller.get_foreground_client_id(session))
+                yield self.stream_emitter.emit(
+                    session_id=session["id"],
+                    event_kind="handoff",
+                    payload=switch_decision,
+                    source="daemon",
+                )
 
         source_event = self.store.append_session_event(
             {
@@ -60,10 +71,10 @@ class SessionOrchestrator:
             source_event_id=source_event["id"],
             content=user_input,
         )
-        yield self._presentation_event(
-            session["id"],
-            "status",
-            {"message": f"{current['display_name']} is compiling runtime context."},
+        yield self.stream_emitter.emit(
+            session_id=session["id"],
+            event_kind="status",
+            payload={"message": f"{current['display_name']} is compiling runtime context."},
             source=current["id"],
         )
 
@@ -106,14 +117,19 @@ class SessionOrchestrator:
         }
 
         self.memory_manager.persist_turn_output(session_id=session["id"], client=client, output=output)
-        self.store.update_client_runtime_state(
-            client["id"],
+        self.runtime_signal_collector.collect(
+            client_id=client["id"],
             runtime_signals_patch=runtime_signals_patch,
             agent_native_state_patch=output.get("agent_native_state_patch", {}),
         )
 
         for tool_event in output.get("tool_events", []):
-            yield self._presentation_event(session["id"], "tool_event", tool_event, source=client["id"])
+            yield self.stream_emitter.emit(
+                session_id=session["id"],
+                event_kind="tool_event",
+                payload=tool_event,
+                source=client["id"],
+            )
 
         if output.get("reply"):
             self.session_manager.record_assistant_turn(
@@ -123,10 +139,10 @@ class SessionOrchestrator:
                 content=output["reply"],
                 metadata={"audit_notes": output.get("audit_notes", [])},
             )
-            yield self._presentation_event(
-                session["id"],
-                "delta",
-                {"text": output["reply"]},
+            yield self.stream_emitter.emit(
+                session_id=session["id"],
+                event_kind="delta",
+                payload={"text": output["reply"]},
                 source=client["id"],
             )
 
@@ -144,14 +160,19 @@ class SessionOrchestrator:
                 target_client_id=switch_request.get("target_client_id"),
             )
             if switch_decision["approved"]:
-                yield self._presentation_event(session["id"], "handoff", switch_decision, source="daemon")
+                yield self.stream_emitter.emit(
+                    session_id=session["id"],
+                    event_kind="handoff",
+                    payload=switch_decision,
+                    source="daemon",
+                )
                 if switch_request.get("replay_turn", True):
                     next_session = self.store.get_session(session["id"])
-                    next_client = self.registry.get(next_session["foreground_client_id"])
-                    yield self._presentation_event(
-                        session["id"],
-                        "status",
-                        {"message": f"{next_client['display_name']} is taking over this turn."},
+                    next_client = self.registry.get(self.foreground_controller.get_foreground_client_id(next_session))
+                    yield self.stream_emitter.emit(
+                        session_id=session["id"],
+                        event_kind="status",
+                        payload={"message": f"{next_client['display_name']} is taking over this turn."},
                         source="daemon",
                     )
                     yield from self._run_client_turn(
@@ -163,10 +184,10 @@ class SessionOrchestrator:
                     )
                     return
 
-        yield self._presentation_event(
-            session["id"],
-            "final",
-            {
+        yield self.stream_emitter.emit(
+            session_id=session["id"],
+            event_kind="final",
+            payload={
                 "active_client_id": self.store.get_session(session["id"])["foreground_client_id"],
                 "reply": output.get("reply", ""),
                 "switch_decision": switch_decision,
@@ -186,56 +207,14 @@ class SessionOrchestrator:
         user_input: str,
         target_client_id: str | None,
     ) -> dict:
-        decision = self.switch_daemon.decide(
-            {
-                "reason": reason,
-                "target_client_id": target_client_id,
-                "current_client": current_client,
-                "clients": self.registry.list(),
-                "user_input": user_input,
-            }
-        )
-        if not decision["approved"]:
-            return decision
-
-        target_client = self.registry.get(decision["target_client_id"])
-        handoff = self.compiler.compile_handoff(
+        return self.handoff_engine.decide(
             session=session,
-            source_client=current_client,
-            target_client=target_client,
+            current_client=current_client,
             reason=reason,
+            trigger=trigger,
             user_input=user_input,
+            target_client_id=target_client_id,
         )
-        self.store.save_memory(
-            {
-                "session_id": session["id"],
-                "layer": "handoff",
-                "owner_client_id": target_client["id"],
-                "kind": "handoff_envelope",
-                "content": handoff["summary"],
-                "metadata": handoff,
-            }
-        )
-        self.store.record_switch(
-            {
-                "session_id": session["id"],
-                "from_client_id": current_client["id"],
-                "to_client_id": target_client["id"],
-                "reason": reason,
-                "trigger": trigger,
-                "explanation": decision["explanation"],
-                "handoff_summary": handoff["summary"],
-            }
-        )
-        self.session_manager.set_foreground(
-            session_id=session["id"],
-            client_id=target_client["id"],
-            reason=reason,
-        )
-        return {
-            **decision,
-            "handoff_summary": handoff["summary"],
-        }
 
     def _schedule_runtime_acceleration(self, *, session: dict, client: dict, user_input: str, output: dict) -> None:
         self.store.append_session_event(
@@ -262,21 +241,3 @@ class SessionOrchestrator:
             user_input=user_input,
             reason="candidate-client-prewarm",
         )
-
-    def _presentation_event(self, session_id: str, event_kind: str, payload: dict, *, source: str) -> dict:
-        event = self.store.append_session_event(
-            {
-                "session_id": session_id,
-                "channel": "presentation",
-                "event_kind": event_kind,
-                "source": source,
-                "payload": payload,
-            }
-        )
-        return {
-            "channel": "presentation",
-            "event_kind": event_kind,
-            "source": source,
-            "payload": payload,
-            "created_at": event["created_at"],
-        }
