@@ -1,0 +1,87 @@
+{
+  "clients": [
+    {
+      "id": "echo-alpha",
+      "display_name": "Echo Alpha",
+      "role": "mock cloud client",
+      "adapter_kind": "mock",
+      "system_prompt": "Respond as a mock client loaded from configuration.",
+      "boundaries": [
+        "demo only",
+        "no shared writes"
+      ],
+      "declared_capability": {
+        "domains": ["demo", "echo"],
+        "permissions": ["reply"],
+        "handoff_keywords": ["echo", "demo"]
+      },
+      "shared_memory_policy": {
+        "read_domains": [],
+        "write_domains": [],
+        "allowed_kinds": ["note"],
+        "write_mode": "append"
+      },
+      "tools": [
+        {
+          "id": "actions.reply",
+          "kind": "built-in"
+        }
+      ],
+      "handoff_rules": {
+        "allow_user_direct_switch": true,
+        "allow_client_request_switch": true
+      },
+      "runtime_preferences": {
+        "transcript_window": 4,
+        "private_memory_window": 4,
+        "shared_memory_window": 4,
+        "handoff_window": 2,
+        "stream_mode": "token-first"
+      },
+      "metadata": {
+        "source": "demo-config"
+      }
+    },
+    {
+      "id": "echo-beta",
+      "display_name": "Echo Beta",
+      "role": "secondary mock cloud client",
+      "adapter_kind": "mock",
+      "system_prompt": "Respond as a secondary mock client loaded from configuration.",
+      "boundaries": [
+        "demo only"
+      ],
+      "declared_capability": {
+        "domains": ["demo", "secondary"],
+        "permissions": ["reply"],
+        "handoff_keywords": ["secondary", "beta"]
+      },
+      "shared_memory_policy": {
+        "read_domains": [],
+        "write_domains": [],
+        "allowed_kinds": ["note"],
+        "write_mode": "append"
+      },
+      "tools": [
+        {
+          "id": "actions.reply",
+          "kind": "built-in"
+        }
+      ],
+      "handoff_rules": {
+        "allow_user_direct_switch": true,
+        "allow_client_request_switch": true
+      },
+      "runtime_preferences": {
+        "transcript_window": 4,
+        "private_memory_window": 4,
+        "shared_memory_window": 4,
+        "handoff_window": 2,
+        "stream_mode": "token-first"
+      },
+      "metadata": {
+        "source": "demo-config"
+      }
+    }
+  ]
+}

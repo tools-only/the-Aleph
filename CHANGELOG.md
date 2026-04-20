@@ -2,6 +2,55 @@
 
 All notable changes to Aleph are documented in this file.
 
+## v0.1.2 - 2026-04-20
+
+### Summary
+
+This version adds the first minimal cloud-service foundations around the Python Aleph framework.
+The core runtime is still adapter-driven, but Aleph can now expose a cleaner service boundary for multi-session orchestration, session inspection, and stream consumption before wiring in real agent runtimes.
+
+### Added
+
+- Added multi-session management primitives:
+  - explicit session creation
+  - session listing
+  - session state lookup
+- Added config-driven client registration:
+  - JSON client blueprint loading
+  - YAML client blueprint loading
+  - engine-side registration helper
+- Added initial service-layer package:
+  - FastAPI app factory
+  - request logging
+  - runtime error handling
+  - session-oriented HTTP endpoints
+  - SSE-style session stream endpoint
+- Added sample client blueprint config under `configs/clients/demo.clients.json`.
+- Added service foundation tests covering:
+  - multi-session creation and listing
+  - event cursor queries
+  - config-based client loading
+
+### Changed
+
+- Extended `SqliteStore` with:
+  - session listing support
+  - cursor-style session event querying for streaming consumers
+- Extended `ClientSessionManager` and `AlephEngine` with service-friendly session APIs.
+- Updated the public package exports to expose:
+  - config loader helpers
+  - service app factory
+- Updated `README.md` with a minimal service-layer section and API entrypoints.
+- Added optional `service` dependencies in `pyproject.toml` for:
+  - `fastapi`
+  - `uvicorn`
+  - `pyyaml`
+
+### Verified
+
+- Ran the full Python test suite successfully:
+  - `scripts/run_tests.py`
+
 ## v0.1.1 - 2026-04-20
 
 ### Summary

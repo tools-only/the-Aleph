@@ -79,6 +79,30 @@ class AlephEngine:
         session = self.session_orchestrator.ensure_session(initial_client_id=initial, title=title)
         return self.inspect_state(session_id=session["id"])
 
+    def create_session(
+        self,
+        *,
+        initial_client_id: str | None = None,
+        title: str = "Aleph Session",
+        metadata: dict | None = None,
+    ) -> dict:
+        clients = self.list_clients()
+        if not clients:
+            raise RuntimeError("Cannot create Aleph session without at least one registered client.")
+        initial = initial_client_id or clients[0]["id"]
+        session = self.client_session_manager.create_session(
+            initial_client_id=initial,
+            title=title,
+            metadata=metadata,
+        )
+        return self.inspect_state(session_id=session["id"])
+
+    def list_sessions(self, limit: int = 50) -> list[dict]:
+        return self.client_session_manager.list_sessions(limit=limit)
+
+    def get_session_state(self, session_id: str) -> dict:
+        return self.inspect_state(session_id=session_id)
+
     def stream_user_turn(self, user_input: str, *, requested_client_id: str | None = None, session_id: str | None = None):
         session = self.store.get_session(session_id) if session_id else self.client_session_manager.get_active()
         if not session:

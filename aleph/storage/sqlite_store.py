@@ -411,6 +411,17 @@ class SqliteStore:
         ).fetchone()
         return self._map_session(row) if row else None
 
+    def list_sessions(self, limit: int = 50) -> list[dict]:
+        rows = self.connection.execute(
+            """
+            SELECT * FROM sessions
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [self._map_session(row) for row in rows]
+
     def set_foreground_client(self, session_id: str, client_id: str, reason: str) -> dict:
         self.connection.execute(
             """
@@ -584,6 +595,44 @@ class SqliteStore:
                 """,
                 (session_id, limit),
             ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "session_id": row["session_id"],
+                "channel": row["channel"],
+                "event_kind": row["event_kind"],
+                "source": row["source"],
+                "payload": _parse_json(row["payload_json"], {}),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def list_session_events_after(
+        self,
+        session_id: str,
+        *,
+        after_created_at: str | None = None,
+        channel: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        clauses = ["session_id = ?"]
+        params: list[object] = [session_id]
+        if channel:
+            clauses.append("channel = ?")
+            params.append(channel)
+        if after_created_at:
+            clauses.append("created_at > ?")
+            params.append(after_created_at)
+        rows = self.connection.execute(
+            f"""
+            SELECT * FROM session_events
+            WHERE {' AND '.join(clauses)}
+            ORDER BY created_at ASC
+            LIMIT ?
+            """,
+            (*params, limit),
+        ).fetchall()
         return [
             {
                 "id": row["id"],

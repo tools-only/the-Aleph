@@ -12,6 +12,7 @@ from .client.context_builder import ClientContext, ClientContextBuilder
 from .client.registry import ClientRegistry, normalize_client_definition
 from .client.session_manager import ClientSessionManager
 from .client.turn_builder import ClientTurnBuilder
+from .config import load_client_blueprints, register_client_blueprints
 from .core.foreground_controller import ForegroundController
 from .core.handoff_engine import HandoffEngine
 from .core.aleph_engine import AlephEngine
@@ -34,6 +35,7 @@ from .domain import (
     Turn,
 )
 from .personas.default_clients import build_default_clients, build_default_personas
+from .service import create_app
 from .storage.sqlite_store import SqliteStore
 
 __all__ = [
@@ -59,6 +61,9 @@ __all__ = [
     "NanobotAdapter",
     "PersistenceAdapter",
     "ProjectionCompiler",
+    "create_app",
+    "load_client_blueprints",
+    "register_client_blueprints",
     "RuntimeSignal",
     "RuntimeSignalCollector",
     "Session",

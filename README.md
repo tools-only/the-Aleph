@@ -149,6 +149,33 @@ C:\Program Files\AutoClaw\resources\python\python.exe scripts\repl.py
 C:\Program Files\AutoClaw\resources\python\python.exe scripts\run_tests.py
 ```
 
+## Minimal Service Layer
+
+Aleph now includes the first service-layer foundations for a cloud deployment:
+
+- multi-session support
+- JSON/YAML client blueprint loading
+- FastAPI app factory
+- SSE-based session stream endpoint
+- basic request logging and runtime error handling
+
+Install the optional service dependencies before running the API service:
+
+```bash
+pip install -e .[service]
+C:\Program Files\AutoClaw\resources\python\python.exe scripts\run_api.py
+```
+
+Current service entrypoints are designed around:
+
+- `GET /health`
+- `GET /clients`
+- `GET /sessions`
+- `POST /sessions`
+- `GET /sessions/{id}`
+- `POST /sessions/{id}/turns`
+- `GET /sessions/{id}/stream`
+
 ## Project docs
 
 - [Changelog](CHANGELOG.md)
